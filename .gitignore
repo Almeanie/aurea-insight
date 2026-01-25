@@ -132,6 +132,9 @@ Thumbs.db
 # Project Specific
 # =========================
 scratchspace/
+
+# Allow frontend lib folder (utils, api clients)
+!living-ledger-auditor/frontend/src/lib/
 *.pdf
 *.csv
 !example_data/*.csv
