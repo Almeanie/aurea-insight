@@ -1,0 +1,64 @@
+{
+  "scenarios": [
+    {
+      "id": "acme_saas",
+      "name": "Acme Software Solutions",
+      "description": "SaaS startup with typical audit issues - expense misclassifications, high-value transactions, prepaid amortization",
+      "industry": "saas",
+      "accounting_basis": "accrual",
+      "gl_file": "../general_ledger.csv",
+      "coa_file": "../chart_of_accounts.csv",
+      "expected_findings": "6-12 findings, HIGH risk",
+      "issues": [
+        "Expense misclassification (travel coded as office supplies)",
+        "High-value transactions above approval threshold",
+        "Prepaid insurance not amortized",
+        "Large period-end revenue entry"
+      ]
+    },
+    {
+      "id": "startup_growth",
+      "name": "TechStart Growth Co",
+      "description": "Fast-growing startup with deferred revenue and rapid hiring",
+      "industry": "saas",
+      "accounting_basis": "accrual",
+      "gl_file": "startup_saas_gl.csv",
+      "expected_findings": "3-6 findings, MEDIUM risk",
+      "issues": [
+        "Deferred revenue recognition timing",
+        "Travel expense misclassification",
+        "High marketing spend"
+      ]
+    },
+    {
+      "id": "fraud_indicators",
+      "name": "Suspicious Corp (Fraud Training)",
+      "description": "Company with multiple fraud red flags - related party transactions, structuring, quarter-end manipulation",
+      "industry": "services",
+      "accounting_basis": "accrual",
+      "gl_file": "fraud_indicators_gl.csv",
+      "expected_findings": "15-25 findings, CRITICAL risk",
+      "issues": [
+        "Related party transactions (Smith Holdings)",
+        "Transaction structuring just under $50,000 threshold",
+        "Offshore payments to suspicious entities",
+        "Quarter-end revenue manipulation",
+        "Reversal and re-recording at higher amounts",
+        "Revenue recognized before delivery"
+      ]
+    },
+    {
+      "id": "clean_retail",
+      "name": "Main Street Retail",
+      "description": "Well-run small retail business with minimal issues",
+      "industry": "retail",
+      "accounting_basis": "accrual",
+      "gl_file": "clean_retail_gl.csv",
+      "expected_findings": "0-2 findings, LOW risk",
+      "issues": [
+        "Generally clean books",
+        "Standard retail operations"
+      ]
+    }
+  ]
+}
