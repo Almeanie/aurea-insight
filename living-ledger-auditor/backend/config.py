@@ -23,7 +23,7 @@ class Settings(BaseSettings):
     
     # Gemini API (Google AI Studio)
     # Get key from: https://aistudio.google.com/apikey
-    GEMINI_API_KEY: Optional[str] = "AIzaSyAixuvAQBlmhNRRwHn6K7rBMSxchQyqvOs"
+    GEMINI_API_KEY: Optional[str] = None
     GEMINI_MODEL: str = "gemini-3-flash-preview"  # Gemini 3 Flash Preview
     
     # Rate limiting
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     
     # UK Companies House API (FREE - configured)
     # Get key from: https://developer.company-information.service.gov.uk/
-    UK_COMPANIES_HOUSE_API_KEY: Optional[str] = "1006aff0-d391-4a21-9fb0-8d4ceaa6911b"
+    UK_COMPANIES_HOUSE_API_KEY: Optional[str] = None
     
     # SEC EDGAR API (FREE - no key required)
     # Works automatically for US public companies
