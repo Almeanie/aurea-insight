@@ -73,53 +73,72 @@ function getEdgeColor(edge: OwnershipEdge): string {
   return RELATIONSHIP_COLORS[rel] || RELATIONSHIP_COLORS["related"];
 }
 
-// Compute hierarchical depth for each node (BFS from root)
-function computeNodeDepths(nodes: EntityNode[], edges: OwnershipEdge[]): Map<string, number> {
-  const depths = new Map<string, number>();
-  const adjacency = new Map<string, string[]>();
+// Build a tree structure from nodes and edges for D3 tree layout
+interface TreeNode {
+  id: string;
+  name: string;
+  data: EntityNode;
+  children: TreeNode[];
+}
+
+function buildTreeStructure(nodes: EntityNode[], edges: OwnershipEdge[]): TreeNode | null {
+  if (nodes.length === 0) return null;
   
-  // Build adjacency list (undirected for depth calculation)
+  // Find root node
+  const rootNode = nodes.find(n => n.is_root) || nodes[0];
+  
+  // Build adjacency list (directed from source to target)
+  const children = new Map<string, Set<string>>();
+  const edgeMap = new Map<string, OwnershipEdge>();
+  
   for (const edge of edges) {
     const source = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
     const target = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
     
-    if (!adjacency.has(source)) adjacency.set(source, []);
-    if (!adjacency.has(target)) adjacency.set(target, []);
-    adjacency.get(source)!.push(target);
-    adjacency.get(target)!.push(source);
+    if (!children.has(source)) children.set(source, new Set());
+    children.get(source)!.add(target);
+    edgeMap.set(`${source}->${target}`, edge);
   }
   
-  // Find root node
-  const rootNode = nodes.find(n => n.is_root);
-  const startId = rootNode?.id || nodes[0]?.id;
+  // Build tree using BFS from root
+  const visited = new Set<string>();
+  const nodeMap = new Map(nodes.map(n => [n.id, n]));
   
-  if (!startId) return depths;
-  
-  // BFS to compute depths
-  const queue: string[] = [startId];
-  depths.set(startId, 0);
-  
-  while (queue.length > 0) {
-    const current = queue.shift()!;
-    const currentDepth = depths.get(current) || 0;
-    const neighbors = adjacency.get(current) || [];
+  function buildNode(nodeId: string): TreeNode | null {
+    if (visited.has(nodeId)) return null;
+    visited.add(nodeId);
     
-    for (const neighbor of neighbors) {
-      if (!depths.has(neighbor)) {
-        depths.set(neighbor, currentDepth + 1);
-        queue.push(neighbor);
+    const node = nodeMap.get(nodeId);
+    if (!node) return null;
+    
+    const childIds = children.get(nodeId) || new Set();
+    const childNodes: TreeNode[] = [];
+    
+    for (const childId of childIds) {
+      const child = buildNode(childId);
+      if (child) childNodes.push(child);
+    }
+    
+    // Also check reverse edges (for ownership relationships where target owns source)
+    for (const [key, edge] of edgeMap) {
+      const target = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
+      const source = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
+      
+      if (target === nodeId && !visited.has(source)) {
+        const child = buildNode(source);
+        if (child) childNodes.push(child);
       }
     }
+    
+    return {
+      id: nodeId,
+      name: node.name,
+      data: node,
+      children: childNodes
+    };
   }
   
-  // Handle disconnected nodes
-  for (const node of nodes) {
-    if (!depths.has(node.id)) {
-      depths.set(node.id, 3); // Put disconnected nodes at outer ring
-    }
-  }
-  
-  return depths;
+  return buildNode(rootNode.id);
 }
 
 export default function OwnershipGraph({ 
@@ -141,6 +160,18 @@ export default function OwnershipGraph({
     });
   }, [nodes, edges]);
 
+  // Create edge lookup for rendering
+  const edgeLookup = useMemo(() => {
+    const lookup = new Map<string, OwnershipEdge>();
+    for (const edge of validEdges) {
+      const source = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
+      const target = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
+      lookup.set(`${source}->${target}`, edge);
+      lookup.set(`${target}->${source}`, edge); // Also store reverse for lookup
+    }
+    return lookup;
+  }, [validEdges]);
+
   useEffect(() => {
     if (!svgRef.current || nodes.length === 0) return;
 
@@ -159,65 +190,30 @@ export default function OwnershipGraph({
 
     svg.call(zoom);
 
-    // Compute depths for hierarchical layout
-    const nodeDepths = computeNodeDepths(nodes, validEdges);
-    const centerX = width / 2;
-    const centerY = height / 2;
+    // Build tree structure
+    const treeData = buildTreeStructure(nodes, validEdges);
     
-    // Group nodes by depth
-    const nodesByDepth = new Map<number, EntityNode[]>();
-    for (const node of nodes) {
-      const depth = nodeDepths.get(node.id) || 0;
-      node.depth = depth;
-      if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
-      nodesByDepth.get(depth)!.push(node);
-    }
-    
-    // Calculate radial positions for hierarchical layout
-    const maxDepth = Math.max(...Array.from(nodesByDepth.keys()), 1);
-    const radiusStep = Math.min(width, height) / (2 * (maxDepth + 1.5));
-    
-    for (const [depth, depthNodes] of nodesByDepth) {
-      const radius = depth === 0 ? 0 : depth * radiusStep + radiusStep * 0.5;
-      const angleStep = (2 * Math.PI) / depthNodes.length;
-      const startAngle = -Math.PI / 2; // Start from top
-      
-      depthNodes.forEach((node, i) => {
-        if (depth === 0) {
-          // Root at center
-          node.x = centerX;
-          node.y = centerY;
-        } else {
-          // Spread nodes in a ring with some offset to avoid overlaps
-          const angle = startAngle + i * angleStep + (depth % 2) * (angleStep / 2);
-          node.x = centerX + radius * Math.cos(angle);
-          node.y = centerY + radius * Math.sin(angle);
-        }
-      });
-    }
+    if (!treeData) return;
 
-    // Create force simulation that preserves hierarchical structure
-    // Use weak forces to prevent overlap while maintaining radial layout
-    const simulation = d3.forceSimulation(nodes as d3.SimulationNodeDatum[])
-      .force("link", d3.forceLink(validEdges)
-        .id((d: any) => d.id)
-        .distance((d: any) => {
-          const sourceDepth = nodeDepths.get(typeof d.source === 'object' ? d.source.id : d.source) || 0;
-          const targetDepth = nodeDepths.get(typeof d.target === 'object' ? d.target.id : d.target) || 0;
-          // Shorter links for same-depth nodes, longer for cross-depth
-          return Math.abs(sourceDepth - targetDepth) <= 1 ? radiusStep * 0.8 : radiusStep * 1.2;
-        })
-        .strength(0.3) // Weak link force to maintain hierarchy
-      )
-      .force("charge", d3.forceManyBody().strength(-200)) // Weaker repulsion
-      .force("collision", d3.forceCollide().radius(45))
-      // Radial force to keep nodes at their depth rings
-      .force("radial", d3.forceRadial(
-        (d: any) => (d.depth || 0) * radiusStep + (d.depth === 0 ? 0 : radiusStep * 0.5),
-        centerX,
-        centerY
-      ).strength(0.8))
-      .alphaDecay(0.02); // Slower decay for smoother layout
+    // Create D3 hierarchy
+    const root = d3.hierarchy(treeData);
+    
+    // Calculate tree dimensions based on node count
+    const nodeCount = root.descendants().length;
+    const treeWidth = Math.max(width - 100, nodeCount * 80);
+    const treeHeight = Math.max(height - 100, root.height * 120);
+    
+    // Create tree layout - horizontal tree (root on left)
+    const treeLayout = d3.tree<TreeNode>()
+      .size([treeHeight, treeWidth])
+      .separation((a, b) => (a.parent === b.parent ? 1.5 : 2));
+    
+    // Apply layout
+    treeLayout(root);
+    
+    // Center the tree
+    const offsetX = 80;
+    const offsetY = (height - treeHeight) / 2;
 
     // Create gradient definitions
     const defs = svg.append("defs");
@@ -231,7 +227,7 @@ export default function OwnershipGraph({
       .attr("height", "200%");
     
     filter.append("feGaussianBlur")
-      .attr("stdDeviation", "3")
+      .attr("stdDeviation", "2")
       .attr("result", "coloredBlur");
     
     const feMerge = filter.append("feMerge");
@@ -242,7 +238,7 @@ export default function OwnershipGraph({
     defs.append("marker")
       .attr("id", "arrowhead")
       .attr("viewBox", "0 -5 10 10")
-      .attr("refX", 35)
+      .attr("refX", 20)
       .attr("refY", 0)
       .attr("markerWidth", 6)
       .attr("markerHeight", 6)
@@ -256,7 +252,7 @@ export default function OwnershipGraph({
       defs.append("marker")
         .attr("id", `arrowhead-${rel}`)
         .attr("viewBox", "0 -5 10 10")
-        .attr("refX", 35)
+        .attr("refX", 20)
         .attr("refY", 0)
         .attr("markerWidth", 6)
         .attr("markerHeight", 6)
@@ -266,100 +262,135 @@ export default function OwnershipGraph({
         .attr("fill", color);
     });
 
-    // Draw edges with curved paths for cleaner hierarchical look
+    // Get all tree links
+    const treeLinks = root.links();
+
+    // Draw links (straight lines with elbow connectors for tree structure)
     const link = g.append("g")
       .attr("class", "links")
       .selectAll("path")
-      .data(validEdges)
+      .data(treeLinks)
       .enter()
       .append("path")
-      .attr("class", (d) => d.is_circular ? "circular-edge" : "")
-      .attr("stroke", (d) => getEdgeColor(d))
-      .attr("stroke-width", (d) => d.is_circular ? 3 : 1.5)
-      .attr("stroke-opacity", 0.7)
-      .attr("stroke-dasharray", (d) => d.is_circular ? "5,5" : "none")
+      .attr("d", (d: any) => {
+        // Use elbow connector for clean tree look
+        const sourceX = d.source.y + offsetX;
+        const sourceY = d.source.x + offsetY;
+        const targetX = d.target.y + offsetX;
+        const targetY = d.target.x + offsetY;
+        const midX = (sourceX + targetX) / 2;
+        
+        return `M${sourceX},${sourceY} L${midX},${sourceY} L${midX},${targetY} L${targetX},${targetY}`;
+      })
+      .attr("stroke", (d: any) => {
+        const edge = edgeLookup.get(`${d.source.data.id}->${d.target.data.id}`) ||
+                     edgeLookup.get(`${d.target.data.id}->${d.source.data.id}`);
+        return edge ? getEdgeColor(edge) : "#666666";
+      })
+      .attr("stroke-width", 2)
+      .attr("stroke-opacity", 0.8)
       .attr("fill", "none")
-      .attr("marker-end", (d) => {
-        const rel = d.relationship?.toLowerCase() || "related";
-        if (d.is_circular) return "url(#arrowhead-circular)";
+      .attr("marker-end", (d: any) => {
+        const edge = edgeLookup.get(`${d.source.data.id}->${d.target.data.id}`) ||
+                     edgeLookup.get(`${d.target.data.id}->${d.source.data.id}`);
+        if (!edge) return "url(#arrowhead)";
+        const rel = edge.relationship?.toLowerCase() || "related";
+        if (edge.is_circular) return "url(#arrowhead-circular)";
         if (RELATIONSHIP_COLORS[rel]) return `url(#arrowhead-${rel})`;
         return "url(#arrowhead)";
       });
-    
-    // Function to create curved path between two points
-    function createCurvedPath(source: any, target: any): string {
-      const dx = target.x - source.x;
-      const dy = target.y - source.y;
-      const dr = Math.sqrt(dx * dx + dy * dy) * 0.5; // Curve radius
-      
-      // Determine curve direction based on relative positions
-      const sweep = source.x < target.x ? 0 : 1;
-      
-      return `M${source.x},${source.y} A${dr},${dr} 0 0,${sweep} ${target.x},${target.y}`;
-    }
 
-    // Draw edge label backgrounds
-    const linkLabelBgs = g.append("g")
-      .attr("class", "link-label-bgs")
-      .selectAll("rect")
-      .data(validEdges)
-      .enter()
-      .append("rect")
-      .attr("fill", (d) => getEdgeColor(d))
-      .attr("rx", 3)
-      .attr("ry", 3)
-      .attr("opacity", 0.9);
-
-    // Draw edge labels
+    // Draw edge labels at midpoint of each link
     const linkLabels = g.append("g")
       .attr("class", "link-labels")
-      .selectAll("text")
-      .data(validEdges)
+      .selectAll("g")
+      .data(treeLinks)
       .enter()
-      .append("text")
+      .append("g")
+      .attr("transform", (d: any) => {
+        const sourceX = d.source.y + offsetX;
+        const sourceY = d.source.x + offsetY;
+        const targetX = d.target.y + offsetX;
+        const targetY = d.target.x + offsetY;
+        const midX = (sourceX + targetX) / 2;
+        const midY = (sourceY + targetY) / 2;
+        return `translate(${midX},${midY})`;
+      });
+
+    // Label background
+    linkLabels.append("rect")
+      .attr("fill", (d: any) => {
+        const edge = edgeLookup.get(`${d.source.data.id}->${d.target.data.id}`) ||
+                     edgeLookup.get(`${d.target.data.id}->${d.source.data.id}`);
+        return edge ? getEdgeColor(edge) : "#666666";
+      })
+      .attr("rx", 3)
+      .attr("ry", 3)
+      .attr("x", (d: any) => {
+        const edge = edgeLookup.get(`${d.source.data.id}->${d.target.data.id}`) ||
+                     edgeLookup.get(`${d.target.data.id}->${d.source.data.id}`);
+        const label = edge ? formatRelationshipLabel(edge) : "related";
+        return -(label.length * 3 + 6);
+      })
+      .attr("y", -8)
+      .attr("width", (d: any) => {
+        const edge = edgeLookup.get(`${d.source.data.id}->${d.target.data.id}`) ||
+                     edgeLookup.get(`${d.target.data.id}->${d.source.data.id}`);
+        const label = edge ? formatRelationshipLabel(edge) : "related";
+        return label.length * 6 + 12;
+      })
+      .attr("height", 16)
+      .attr("opacity", 0.9);
+
+    // Label text
+    linkLabels.append("text")
       .attr("fill", "#ffffff")
       .attr("font-size", "9px")
       .attr("font-weight", "500")
       .attr("text-anchor", "middle")
       .attr("dominant-baseline", "middle")
-      .text((d) => formatRelationshipLabel(d));
+      .text((d: any) => {
+        const edge = edgeLookup.get(`${d.source.data.id}->${d.target.data.id}`) ||
+                     edgeLookup.get(`${d.target.data.id}->${d.source.data.id}`);
+        return edge ? formatRelationshipLabel(edge) : "related";
+      });
 
-    // Draw nodes
+    // Draw nodes at tree positions
     const node = g.append("g")
       .attr("class", "nodes")
       .selectAll("g")
-      .data(nodes)
+      .data(root.descendants())
       .enter()
       .append("g")
+      .attr("transform", (d: any) => `translate(${d.y + offsetX},${d.x + offsetY})`)
       .attr("cursor", "pointer")
-      .call(d3.drag<SVGGElement, any>()
-        .on("start", dragstarted)
-        .on("drag", dragged)
-        .on("end", dragended)
-      )
-      .on("click", (event, d) => {
-        setSelectedNode(d as EntityNode);
+      .on("click", (event, d: any) => {
+        setSelectedNode(d.data.data as EntityNode);
       });
 
     // Node circles
     node.append("circle")
-      .attr("r", (d: any) => d.is_root ? 30 : 25)
+      .attr("r", (d: any) => d.data.data.is_root ? 25 : 20)
       .attr("fill", (d: any) => {
-        if (d.is_root) return "#10b981"; // Green for root/audited company
-        if (d.is_boilerplate || d.type === "boilerplate") return "#6b7280"; // Gray for boilerplate
-        if (d.red_flags && d.red_flags.length > 0) return "#ef4444";
-        if (d.type === "company") return "#3b82f6";
-        if (d.type === "individual") return "#8b5cf6";
+        const nodeData = d.data.data;
+        if (nodeData.is_root) return "#10b981";
+        if (nodeData.is_boilerplate || nodeData.type === "boilerplate") return "#6b7280";
+        if (nodeData.red_flags && nodeData.red_flags.length > 0) return "#ef4444";
+        if (nodeData.type === "company") return "#3b82f6";
+        if (nodeData.type === "individual") return "#8b5cf6";
         return "#666666";
       })
       .attr("stroke", (d: any) => {
-        if (d.is_root) return "#34d399"; // Bright green stroke for root
-        if (d.is_boilerplate || d.type === "boilerplate") return "#9ca3af"; // Gray stroke for boilerplate
-        if (d.red_flags && d.red_flags.length > 0) return "#ff3366";
+        const nodeData = d.data.data;
+        if (nodeData.is_root) return "#34d399";
+        if (nodeData.is_boilerplate || nodeData.type === "boilerplate") return "#9ca3af";
+        if (nodeData.red_flags && nodeData.red_flags.length > 0) return "#ff3366";
         return "#00d4ff";
       })
-      .attr("stroke-width", (d: any) => d.is_root ? 3 : 2)
-      .attr("stroke-dasharray", (d: any) => (d.is_boilerplate || d.type === "boilerplate") ? "4,2" : "none")
+      .attr("stroke-width", (d: any) => d.data.data.is_root ? 3 : 2)
+      .attr("stroke-dasharray", (d: any) => 
+        (d.data.data.is_boilerplate || d.data.data.type === "boilerplate") ? "4,2" : "none"
+      )
       .attr("filter", "url(#glow)");
 
     // Node icons
@@ -367,70 +398,42 @@ export default function OwnershipGraph({
       .attr("text-anchor", "middle")
       .attr("dy", "0.35em")
       .attr("fill", "white")
-      .attr("font-size", (d: any) => d.is_root ? "16px" : "14px")
-      .attr("font-weight", (d: any) => d.is_root ? "bold" : "normal")
+      .attr("font-size", (d: any) => d.data.data.is_root ? "14px" : "12px")
+      .attr("font-weight", (d: any) => d.data.data.is_root ? "bold" : "normal")
       .text((d: any) => {
-        if (d.is_root) return "A"; // A for Audited company
-        if (d.is_boilerplate || d.type === "boilerplate") return "?";
-        if (d.type === "company") return "B";
-        if (d.type === "individual") return "P";
+        const nodeData = d.data.data;
+        if (nodeData.is_root) return "A";
+        if (nodeData.is_boilerplate || nodeData.type === "boilerplate") return "?";
+        if (nodeData.type === "company") return "B";
+        if (nodeData.type === "individual") return "P";
         return "?";
       });
 
-    // Node labels
+    // Node labels (positioned to the side to avoid overlap)
     node.append("text")
-      .attr("text-anchor", "middle")
-      .attr("dy", "45px")
+      .attr("text-anchor", (d: any) => d.children ? "end" : "start")
+      .attr("x", (d: any) => d.children ? -28 : 28)
+      .attr("dy", "0.35em")
       .attr("fill", "#fafafa")
-      .attr("font-size", "11px")
-      .text((d: any) => d.name?.slice(0, 20) || d.id);
+      .attr("font-size", "10px")
+      .text((d: any) => {
+        const name = d.data.name || d.data.id;
+        return name.length > 18 ? name.slice(0, 18) + "..." : name;
+      });
 
-    // Update positions on tick
-    simulation.on("tick", () => {
-      // Update curved paths
-      link.attr("d", (d: any) => createCurvedPath(d.source, d.target));
-
-      // Position label backgrounds at midpoint of curve
-      linkLabelBgs
-        .attr("x", (d: any) => {
-          const label = formatRelationshipLabel(d);
-          return (d.source.x + d.target.x) / 2 - (label.length * 3 + 6);
-        })
-        .attr("y", (d: any) => (d.source.y + d.target.y) / 2 - 8)
-        .attr("width", (d: any) => {
-          const label = formatRelationshipLabel(d);
-          return label.length * 6 + 12;
-        })
-        .attr("height", 16);
-
-      linkLabels
-        .attr("x", (d: any) => (d.source.x + d.target.x) / 2)
-        .attr("y", (d: any) => (d.source.y + d.target.y) / 2);
-
-      node.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
-    });
-
-    function dragstarted(event: any) {
-      if (!event.active) simulation.alphaTarget(0.3).restart();
-      event.subject.fx = event.subject.x;
-      event.subject.fy = event.subject.y;
+    // Initial zoom to fit content
+    const bounds = g.node()?.getBBox();
+    if (bounds) {
+      const fullWidth = bounds.width + 100;
+      const fullHeight = bounds.height + 100;
+      const scale = Math.min(width / fullWidth, height / fullHeight, 1);
+      const translateX = (width - fullWidth * scale) / 2 - bounds.x * scale + 50;
+      const translateY = (height - fullHeight * scale) / 2 - bounds.y * scale + 50;
+      
+      svg.call(zoom.transform, d3.zoomIdentity.translate(translateX, translateY).scale(scale));
     }
 
-    function dragged(event: any) {
-      event.subject.fx = event.x;
-      event.subject.fy = event.y;
-    }
-
-    function dragended(event: any) {
-      if (!event.active) simulation.alphaTarget(0);
-      event.subject.fx = null;
-      event.subject.fy = null;
-    }
-
-    return () => {
-      simulation.stop();
-    };
-  }, [nodes, validEdges, width, height]);
+  }, [nodes, validEdges, edgeLookup, width, height]);
 
   return (
     <div className="relative">
