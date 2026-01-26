@@ -185,7 +185,11 @@ class BeneficialOwnershipDiscovery:
         self,
         seed_entities: list[str],
         depth: int = 2,
-        progress_callback: callable = None
+        progress_callback: callable = None,
+        data_callback: callable = None,
+        is_cancelled: callable = None,
+        save_checkpoint: callable = None,
+        on_quota_exceeded: callable = None
     ) -> dict:
         """
         Discover ownership network starting from seed entities.
@@ -202,6 +206,10 @@ class BeneficialOwnershipDiscovery:
             seed_entities: List of company/entity names to search
             depth: How deep to traverse ownership chains (1-3)
             progress_callback: Optional callback for progress updates (msg, pct, data)
+            data_callback: Optional callback for streaming graph data (type, data)
+            is_cancelled: Optional callback to check if discovery should stop
+            save_checkpoint: Optional callback to save checkpoint (processed, remaining)
+            on_quota_exceeded: Optional callback when API quota is exceeded
             
         Returns:
             Discovery results with graph, findings, and data source info
@@ -212,6 +220,28 @@ class BeneficialOwnershipDiscovery:
             if progress_callback:
                 try:
                     progress_callback(msg, pct, data)
+                except Exception:
+                    pass
+        
+        def stream_data(data_type: str, data: dict):
+            """Stream graph data to frontend in real-time."""
+            if data_callback:
+                try:
+                    data_callback(data_type, data)
+                except Exception:
+                    pass
+        
+        def check_cancelled() -> bool:
+            """Check if discovery has been cancelled."""
+            if is_cancelled:
+                return is_cancelled()
+            return False
+        
+        def checkpoint(processed: list, remaining: list):
+            """Save a checkpoint."""
+            if save_checkpoint:
+                try:
+                    save_checkpoint(processed, remaining)
                 except Exception:
                     pass
         
@@ -269,17 +299,47 @@ class BeneficialOwnershipDiscovery:
                     else:
                         report_progress(f"Found: {entity_name} (via {source})", pct, {"source": source})
                     
-                    # Queue owners for next depth level
+                    # Stream the node to frontend
+                    node_data = {
+                        "id": entity_data.get("entity_id", entity_name),
+                        "name": entity_data.get("name", entity_name),
+                        "type": entity_data.get("entity_type", "company"),
+                        "jurisdiction": entity_data.get("jurisdiction"),
+                        "is_boilerplate": is_boilerplate,
+                        "api_source": source,
+                        "red_flags": entity_data.get("red_flags", [])
+                    }
+                    stream_data("node", node_data)
+                    
+                    # Stream edges for beneficial owners
                     for owner in entity_data.get("beneficial_owners", []):
                         owner_name = owner.get("name", "")
-                        if owner_name and owner_name not in processed_entities:
-                            next_batch.append(owner_name)
+                        if owner_name:
+                            edge_data = {
+                                "source": owner_name,
+                                "target": entity_name,
+                                "relationship": "beneficial_owner",
+                                "percentage": owner.get("percentage"),
+                            }
+                            stream_data("edge", edge_data)
+                            
+                            if owner_name not in processed_entities:
+                                next_batch.append(owner_name)
                     
-                    # Queue parent companies from corporate relationships
+                    # Stream edges for parent companies
                     for parent in entity_data.get("parent_companies", []):
                         parent_name = parent.get("name", "")
-                        if parent_name and parent_name not in processed_entities:
-                            next_batch.append(parent_name)
+                        if parent_name:
+                            edge_data = {
+                                "source": parent_name,
+                                "target": entity_name,
+                                "relationship": "parent_company",
+                                "percentage": parent.get("ownership_percentage"),
+                            }
+                            stream_data("edge", edge_data)
+                            
+                            if parent_name not in processed_entities:
+                                next_batch.append(parent_name)
             
             entities_to_process = next_batch
         
@@ -287,6 +347,10 @@ class BeneficialOwnershipDiscovery:
         logger.info("[discover_ownership_network] Analyzing graph for fraud patterns")
         report_progress("Analyzing ownership graph for fraud patterns...", 88.0)
         findings = await self._analyze_fraud_patterns()
+        
+        # Stream findings to frontend
+        for finding in findings:
+            stream_data("finding", finding)
         
         # Build response graph
         graph = self._build_graph_response()

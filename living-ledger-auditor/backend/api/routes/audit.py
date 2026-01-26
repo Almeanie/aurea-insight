@@ -20,66 +20,84 @@ router = APIRouter()
 audit_results: dict[str, dict] = {}
 
 
-@router.post("/{company_id}/run")
-async def run_audit(company_id: str, background_tasks: BackgroundTasks):
-    """
-    Run a full audit on a company.
-    This includes:
-    - GAAP compliance checks
-    - Anomaly detection
-    - Fraud pattern detection
-    - Finding generation with AI reasoning
-    """
-    logger.info(f"[run_audit] Starting audit for company: {company_id}")
+async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, resume: bool = False):
+    """Background task to run the actual audit."""
+    from audit.engine import AuditEngine
     
     try:
-        from api.routes.company import companies
-        from audit.engine import AuditEngine
+        # Get checkpoint data if resuming
+        checkpoint = None
+        if resume:
+            checkpoint = progress_tracker.get_checkpoint(audit_id)
+            logger.info(f"[_run_audit_task] Resuming from checkpoint: {checkpoint}")
         
-        if company_id not in companies:
-            logger.error(f"[run_audit] Company not found: {company_id}")
-            raise HTTPException(status_code=404, detail="Company not found")
-        
-        company_data = companies[company_id]
-        audit_id = str(uuid.uuid4())
-        
-        # Start progress tracking
-        progress_tracker.start_operation(audit_id, "audit")
-        
-        logger.info(f"[run_audit] Created audit ID: {audit_id}")
-        logger.info(f"[run_audit] Company: {company_data['metadata'].name}")
-        logger.info(f"[run_audit] Accounting basis: {company_data['metadata'].accounting_basis}")
-        
-        progress_tracker.add_step(audit_id, "info", f"Auditing: {company_data['metadata'].name}")
-        
-        # Create audit trail record
-        logger.info(f"[run_audit] Creating audit trail record")
-        progress_tracker.add_step(audit_id, "info", "Creating audit trail record...")
-        record = audit_trail.create_record(
-            audit_id=audit_id,
-            company_id=company_id,
-            created_by="api"
-        )
+        # Create audit trail record (or reuse existing)
+        if not resume:
+            logger.info(f"[_run_audit_task] Creating audit trail record for {audit_id}")
+            progress_tracker.add_step(audit_id, "info", "Creating audit trail record...", current_step=1, step_name="Initialization")
+            record = audit_trail.create_record(
+                audit_id=audit_id,
+                company_id=company_id,
+                created_by="api"
+            )
+        else:
+            # Try to get existing record or create new
+            record = audit_trail.get_record(audit_id)
+            if not record:
+                record = audit_trail.create_record(
+                    audit_id=audit_id,
+                    company_id=company_id,
+                    created_by="api"
+                )
         
         # Initialize audit engine
-        logger.info(f"[run_audit] Initializing audit engine")
-        progress_tracker.add_step(audit_id, "info", "Initializing audit engine...", progress_percent=5.0)
+        logger.info(f"[_run_audit_task] Initializing audit engine")
+        progress_tracker.add_step(audit_id, "info", "Initializing audit engine...", progress_percent=5.0, current_step=1, step_name="Initialization")
+        progress_tracker.set_total_steps(audit_id, 8)  # 8 main phases
         engine = AuditEngine()
         
-        # Run audit with progress callback
-        logger.info(f"[run_audit] Running full audit...")
-        progress_tracker.add_step(audit_id, "info", "Starting GAAP compliance checks...", progress_percent=10.0)
+        # Data callback to stream findings/ajes/risk to frontend
+        def data_callback(data_type: str, data: dict):
+            """Stream data updates to frontend in real-time."""
+            progress_tracker.add_step(
+                audit_id, 
+                "data", 
+                f"Streaming {data_type}", 
+                data={"data_type": data_type, "payload": data}
+            )
+        
+        # Cancellation check callback
+        def is_cancelled():
+            return progress_tracker.is_cancelled(audit_id)
+        
+        # Checkpoint callback
+        def save_checkpoint(phase: str, data: dict):
+            progress_tracker.save_checkpoint(audit_id, {"phase": phase, "data": data})
+        
+        # Quota exceeded callback
+        def on_quota_exceeded():
+            progress_tracker.set_quota_exceeded(audit_id)
+            save_checkpoint("quota_exceeded", {"partial_results": True})
+        
+        # Run the audit
+        logger.info(f"[_run_audit_task] Running full audit...")
+        progress_tracker.add_step(audit_id, "info", "Starting GAAP compliance checks...", progress_percent=10.0, current_step=2, step_name="GAAP Compliance")
         
         results = await engine.run_full_audit(
             company_data=company_data,
             audit_record=record,
-            progress_callback=lambda msg, pct: progress_tracker.add_step(audit_id, "info", msg, progress_percent=pct)
+            progress_callback=lambda msg, pct: progress_tracker.add_step(audit_id, "info", msg, progress_percent=pct),
+            data_callback=data_callback,
+            is_cancelled=is_cancelled,
+            save_checkpoint=save_checkpoint,
+            on_quota_exceeded=on_quota_exceeded,
+            resume_from=checkpoint
         )
         
-        logger.info(f"[run_audit] Audit completed")
-        logger.info(f"[run_audit] Findings count: {len(results['findings'])}")
-        logger.info(f"[run_audit] AJEs count: {len(results['ajes'])}")
-        logger.info(f"[run_audit] Risk level: {results['risk_score'].get('risk_level', 'unknown')}")
+        logger.info(f"[_run_audit_task] Audit completed")
+        logger.info(f"[_run_audit_task] Findings count: {len(results['findings'])}")
+        logger.info(f"[_run_audit_task] AJEs count: {len(results['ajes'])}")
+        logger.info(f"[_run_audit_task] Risk level: {results['risk_score'].get('risk_level', 'unknown')}")
         
         # Store results
         audit_results[audit_id] = {
@@ -91,7 +109,7 @@ async def run_audit(company_id: str, background_tasks: BackgroundTasks):
         }
         
         # Finalize audit trail
-        logger.info(f"[run_audit] Finalizing audit trail")
+        logger.info(f"[_run_audit_task] Finalizing audit trail")
         audit_trail.finalize_record(audit_id)
         
         response = {
@@ -106,17 +124,51 @@ async def run_audit(company_id: str, background_tasks: BackgroundTasks):
         # Complete progress tracking
         progress_tracker.complete_operation(audit_id, response)
         
-        logger.info(f"[run_audit] Returning audit results: {response}")
-        return response
+        logger.info(f"[_run_audit_task] Audit task finished: {response}")
         
-    except HTTPException as he:
-        progress_tracker.fail_operation(audit_id, str(he))
-        raise
     except Exception as e:
-        logger.error(f"[run_audit] Error during audit: {str(e)}")
+        logger.error(f"[_run_audit_task] Error during audit: {str(e)}")
         logger.exception(e)
         progress_tracker.fail_operation(audit_id, str(e))
-        raise HTTPException(status_code=500, detail=f"Audit failed: {str(e)}")
+
+
+@router.post("/{company_id}/run")
+async def run_audit(company_id: str, background_tasks: BackgroundTasks):
+    """
+    Run a full audit on a company.
+    Returns immediately with audit_id so frontend can connect to SSE stream.
+    The actual audit runs in the background.
+    """
+    logger.info(f"[run_audit] Starting audit for company: {company_id}")
+    
+    from api.routes.company import companies
+    
+    if company_id not in companies:
+        logger.error(f"[run_audit] Company not found: {company_id}")
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    company_data = companies[company_id]
+    audit_id = str(uuid.uuid4())
+    
+    # Start progress tracking immediately
+    progress_tracker.start_operation(audit_id, "audit")
+    
+    logger.info(f"[run_audit] Created audit ID: {audit_id}")
+    logger.info(f"[run_audit] Company: {company_data['metadata'].name}")
+    
+    progress_tracker.add_step(audit_id, "info", f"Auditing: {company_data['metadata'].name}")
+    
+    # Schedule the audit to run in background
+    # Use asyncio.create_task so it runs concurrently
+    asyncio.create_task(_run_audit_task(company_id, company_data, audit_id))
+    
+    # Return immediately so frontend can connect to SSE
+    return {
+        "audit_id": audit_id,
+        "company_id": company_id,
+        "status": "running",
+        "message": "Audit started. Connect to SSE stream for live updates."
+    }
 
 
 @router.get("/{company_id}/stream/{audit_id}")
@@ -446,4 +498,82 @@ async def get_reasoning_chain(company_id: str, audit_id: Optional[str] = None):
         "ai_summary": ai_summary,
         "findings_count": len(result["findings"]),
         "ajes_count": len(result["ajes"])
+    }
+
+
+@router.post("/{company_id}/cancel/{audit_id}")
+async def cancel_audit(company_id: str, audit_id: str):
+    """
+    Cancel a running audit.
+    The audit will pause at the next checkpoint and can be resumed later.
+    """
+    logger.info(f"[cancel_audit] Cancelling audit: {audit_id}")
+    
+    if not progress_tracker.get_status(audit_id):
+        raise HTTPException(status_code=404, detail="Audit not found or not running")
+    
+    if progress_tracker.is_completed(audit_id):
+        raise HTTPException(status_code=400, detail="Audit already completed")
+    
+    # Cancel the operation
+    progress_tracker.cancel_operation(audit_id)
+    
+    return {
+        "audit_id": audit_id,
+        "company_id": company_id,
+        "status": "paused",
+        "message": "Audit paused. You can resume it later."
+    }
+
+
+@router.post("/{company_id}/resume/{audit_id}")
+async def resume_audit(company_id: str, audit_id: str):
+    """
+    Resume a paused or quota-exceeded audit from its last checkpoint.
+    """
+    logger.info(f"[resume_audit] Resuming audit: {audit_id}")
+    
+    from api.routes.company import companies
+    
+    if company_id not in companies:
+        raise HTTPException(status_code=404, detail="Company not found")
+    
+    if not progress_tracker.has_checkpoint(audit_id):
+        raise HTTPException(status_code=400, detail="No checkpoint available for resume")
+    
+    company_data = companies[company_id]
+    
+    # Reset cancellation and set status to running
+    progress_tracker.reset_cancellation(audit_id)
+    progress_tracker.add_step(audit_id, "info", "Resuming audit from checkpoint...")
+    
+    # Schedule the resumed audit to run in background
+    asyncio.create_task(_run_audit_task(company_id, company_data, audit_id, resume=True))
+    
+    return {
+        "audit_id": audit_id,
+        "company_id": company_id,
+        "status": "running",
+        "message": "Audit resumed from checkpoint."
+    }
+
+
+@router.get("/{company_id}/status/{audit_id}")
+async def get_audit_status(company_id: str, audit_id: str):
+    """
+    Get the current status of an audit.
+    """
+    status = progress_tracker.get_status(audit_id)
+    step_info = progress_tracker.get_step_info(audit_id)
+    has_checkpoint = progress_tracker.has_checkpoint(audit_id)
+    
+    return {
+        "audit_id": audit_id,
+        "company_id": company_id,
+        "status": status or "not_found",
+        "current_step": step_info.get("current_step"),
+        "total_steps": step_info.get("total_steps"),
+        "step_name": step_info.get("step_name"),
+        "has_checkpoint": has_checkpoint,
+        "is_completed": progress_tracker.is_completed(audit_id)
     }

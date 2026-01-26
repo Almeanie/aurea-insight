@@ -9,7 +9,7 @@ from loguru import logger
 import sys
 
 from config import settings
-from api.routes import company, audit, ownership, chat, export
+from api.routes import company, audit, ownership, chat, export, settings as settings_router
 
 
 # Configure logging
@@ -59,6 +59,7 @@ app.include_router(audit.router, prefix=f"{settings.API_PREFIX}/audit", tags=["A
 app.include_router(ownership.router, prefix=f"{settings.API_PREFIX}/ownership", tags=["Ownership"])
 app.include_router(chat.router, prefix=f"{settings.API_PREFIX}/chat", tags=["Chat"])
 app.include_router(export.router, prefix=f"{settings.API_PREFIX}/export", tags=["Export"])
+app.include_router(settings_router.router, prefix=f"{settings.API_PREFIX}/settings", tags=["Settings"])
 
 
 @app.get("/")

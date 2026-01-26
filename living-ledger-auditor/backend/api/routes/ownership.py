@@ -101,14 +101,87 @@ async def get_ownership_findings(graph_id: str):
     }
 
 
+async def _run_ownership_discovery_task(company_id: str, vendors: list, graph_id: str):
+    """Background task to run ownership discovery."""
+    from ownership.discovery import BeneficialOwnershipDiscovery
+    
+    try:
+        # Set total steps
+        progress_tracker.set_total_steps(graph_id, len(vendors[:20]) + 3)  # vendors + init + analyze + complete
+        
+        discovery = BeneficialOwnershipDiscovery()
+        
+        def ownership_progress(msg: str, pct: float, data: dict = None):
+            progress_tracker.add_step(graph_id, "info", msg, data=data, progress_percent=pct)
+        
+        def data_callback(data_type: str, data: dict):
+            """Stream graph data (nodes, edges, findings) to frontend in real-time."""
+            progress_tracker.add_step(
+                graph_id, 
+                "data", 
+                f"Streaming {data_type}", 
+                data={"data_type": data_type, "payload": data}
+            )
+        
+        def is_cancelled():
+            """Check if discovery was cancelled."""
+            return progress_tracker.is_cancelled(graph_id)
+        
+        def save_checkpoint(processed: list, remaining: list):
+            """Save checkpoint for resume."""
+            progress_tracker.save_checkpoint(graph_id, {
+                "company_id": company_id,
+                "processed_vendors": processed,
+                "remaining_vendors": remaining
+            })
+        
+        def on_quota_exceeded():
+            """Handle quota exceeded."""
+            progress_tracker.set_quota_exceeded(graph_id)
+        
+        result = await discovery.discover_ownership_network(
+            seed_entities=vendors[:20],  # Limit to first 20 vendors
+            depth=2,
+            progress_callback=ownership_progress,
+            data_callback=data_callback,
+            is_cancelled=is_cancelled,
+            save_checkpoint=save_checkpoint,
+            on_quota_exceeded=on_quota_exceeded
+        )
+        
+        # Store the graph
+        ownership_graphs[graph_id] = {
+            "company_id": company_id,
+            "seed_entities": vendors[:20],
+            "graph": result["graph"],
+            "findings": result.get("findings", [])
+        }
+        
+        response = {
+            "company_id": company_id,
+            "graph_id": graph_id,
+            "vendors_analyzed": len(vendors[:20]),
+            "entities_discovered": result["entities_discovered"],
+            "findings_count": len(result.get("findings", []))
+        }
+        
+        progress_tracker.complete_operation(graph_id, response)
+        
+        logger.info(f"[_run_ownership_discovery_task] Complete: {response}")
+        
+    except Exception as e:
+        logger.error(f"[_run_ownership_discovery_task] Error: {str(e)}")
+        progress_tracker.fail_operation(graph_id, str(e))
+
+
 @router.post("/analyze-vendors/{company_id}")
 async def analyze_vendors(company_id: str):
     """
     Analyze all vendors from a company's GL for ownership patterns.
-    Automatically discovers beneficial owners and flags suspicious patterns.
+    Returns immediately with graph_id so frontend can connect to SSE stream.
+    Actual discovery runs in background.
     """
     from api.routes.company import companies
-    from ownership.discovery import BeneficialOwnershipDiscovery
     
     if company_id not in companies:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -136,46 +209,21 @@ async def analyze_vendors(company_id: str):
     # Store the graph ID
     graph_id = f"vendor_graph_{company_id}"
     
-    # Start progress tracking
+    # Start progress tracking immediately
     progress_tracker.start_operation(graph_id, "ownership_discovery")
     progress_tracker.add_step(graph_id, "info", f"Found {len(vendors)} unique vendors in GL")
     
-    # Discover ownership with progress callback
-    discovery = BeneficialOwnershipDiscovery()
+    # Run discovery in background
+    asyncio.create_task(_run_ownership_discovery_task(company_id, vendors, graph_id))
     
-    def ownership_progress(msg: str, pct: float, data: dict = None):
-        progress_tracker.add_step(graph_id, "info", msg, data=data, progress_percent=pct)
-    
-    try:
-        result = await discovery.discover_ownership_network(
-            seed_entities=vendors[:20],  # Limit to first 20 vendors
-            depth=2,
-            progress_callback=ownership_progress
-        )
-        
-        # Store the graph
-        ownership_graphs[graph_id] = {
-            "company_id": company_id,
-            "seed_entities": vendors[:20],
-            "graph": result["graph"],
-            "findings": result.get("findings", [])
-        }
-        
-        response = {
-            "company_id": company_id,
-            "graph_id": graph_id,
-            "vendors_analyzed": len(vendors[:20]),
-            "entities_discovered": result["entities_discovered"],
-            "findings_count": len(result.get("findings", []))
-        }
-        
-        progress_tracker.complete_operation(graph_id, response)
-        
-        return response
-        
-    except Exception as e:
-        progress_tracker.fail_operation(graph_id, str(e))
-        raise
+    # Return immediately so frontend can connect to SSE
+    return {
+        "company_id": company_id,
+        "graph_id": graph_id,
+        "vendors_analyzed": len(vendors[:20]),
+        "status": "running",
+        "message": "Ownership discovery started. Connect to SSE stream for live updates."
+    }
 
 
 @router.get("/stream/{graph_id}")
@@ -216,3 +264,78 @@ async def stream_ownership_progress(graph_id: str):
             "X-Accel-Buffering": "no"
         }
     )
+
+
+@router.post("/cancel/{graph_id}")
+async def cancel_ownership_discovery(graph_id: str):
+    """
+    Cancel a running ownership discovery.
+    The discovery will pause at the next checkpoint and can be resumed later.
+    """
+    logger.info(f"[cancel_ownership_discovery] Cancelling discovery: {graph_id}")
+    
+    if not progress_tracker.get_status(graph_id):
+        raise HTTPException(status_code=404, detail="Discovery not found or not running")
+    
+    if progress_tracker.is_completed(graph_id):
+        raise HTTPException(status_code=400, detail="Discovery already completed")
+    
+    # Cancel the operation
+    progress_tracker.cancel_operation(graph_id)
+    
+    return {
+        "graph_id": graph_id,
+        "status": "paused",
+        "message": "Ownership discovery paused. You can resume it later."
+    }
+
+
+@router.post("/resume/{graph_id}")
+async def resume_ownership_discovery(graph_id: str):
+    """
+    Resume a paused or quota-exceeded ownership discovery from its last checkpoint.
+    """
+    logger.info(f"[resume_ownership_discovery] Resuming discovery: {graph_id}")
+    
+    if not progress_tracker.has_checkpoint(graph_id):
+        raise HTTPException(status_code=400, detail="No checkpoint available for resume")
+    
+    checkpoint = progress_tracker.get_checkpoint(graph_id)
+    company_id = checkpoint.get("company_id") if checkpoint else None
+    vendors = checkpoint.get("remaining_vendors", []) if checkpoint else []
+    
+    if not company_id or not vendors:
+        raise HTTPException(status_code=400, detail="Invalid checkpoint data")
+    
+    # Reset cancellation and set status to running
+    progress_tracker.reset_cancellation(graph_id)
+    progress_tracker.add_step(graph_id, "info", "Resuming discovery from checkpoint...")
+    
+    # Schedule the resumed discovery to run in background
+    asyncio.create_task(_run_ownership_discovery_task(company_id, vendors, graph_id))
+    
+    return {
+        "graph_id": graph_id,
+        "status": "running",
+        "message": "Ownership discovery resumed from checkpoint."
+    }
+
+
+@router.get("/status/{graph_id}")
+async def get_ownership_status(graph_id: str):
+    """
+    Get the current status of an ownership discovery.
+    """
+    status = progress_tracker.get_status(graph_id)
+    step_info = progress_tracker.get_step_info(graph_id)
+    has_checkpoint = progress_tracker.has_checkpoint(graph_id)
+    
+    return {
+        "graph_id": graph_id,
+        "status": status or "not_found",
+        "current_step": step_info.get("current_step"),
+        "total_steps": step_info.get("total_steps"),
+        "step_name": step_info.get("step_name"),
+        "has_checkpoint": has_checkpoint,
+        "is_completed": progress_tracker.is_completed(graph_id)
+    }

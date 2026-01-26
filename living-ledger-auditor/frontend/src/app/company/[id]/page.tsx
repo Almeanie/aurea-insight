@@ -36,6 +36,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
+import { AuditProgress, OwnershipProgress } from "@/components/ui/progress";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -60,6 +61,23 @@ export default function CompanyPage({ params }: PageProps) {
   const [ownershipGraph, setOwnershipGraph] = useState<any>(null);
   const [ownershipFindings, setOwnershipFindings] = useState<any[]>([]);
   const [isDiscoveringOwnership, setIsDiscoveringOwnership] = useState(false);
+  const [streamingNodes, setStreamingNodes] = useState<any[]>([]);
+  const [streamingEdges, setStreamingEdges] = useState<any[]>([]);
+
+  // Progress tracking state
+  const [auditProgress, setAuditProgress] = useState(0);
+  const [auditCurrentStep, setAuditCurrentStep] = useState(0);
+  const [auditTotalSteps, setAuditTotalSteps] = useState(8);
+  const [auditStepName, setAuditStepName] = useState("");
+  const [auditStatus, setAuditStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
+  
+  const [ownershipProgress, setOwnershipProgress] = useState(0);
+  const [ownershipCurrentStep, setOwnershipCurrentStep] = useState(0);
+  const [ownershipTotalSteps, setOwnershipTotalSteps] = useState(10);
+  const [ownershipStepName, setOwnershipStepName] = useState("");
+  const [ownershipStatus, setOwnershipStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
+  
+  const [ownershipGraphId, setOwnershipGraphId] = useState<string | null>(null);
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<{role: string; content: string}[]>([]);
@@ -120,34 +138,160 @@ export default function CompanyPage({ params }: PageProps) {
     setLiveReasoningSteps(prev => [...prev, `${timestamp} ${prefix} ${step}`]);
   };
 
+  // State for streaming findings
+  const [streamingFindings, setStreamingFindings] = useState<any[]>([]);
+  const [streamingAjes, setStreamingAjes] = useState<any[]>([]);
+  const [streamingRiskScore, setStreamingRiskScore] = useState<any>(null);
+
+  // Stop audit function
+  const stopAudit = async () => {
+    if (!currentAuditId) return;
+    
+    try {
+      const response = await fetch(`http://localhost:8000/api/audit/${id}/cancel/${currentAuditId}`, {
+        method: "POST"
+      });
+      if (response.ok) {
+        setAuditStatus("paused");
+        addReasoningStep("Audit paused by user", "info");
+      }
+    } catch (error) {
+      console.error("Failed to stop audit:", error);
+    }
+  };
+
+  // Resume audit function
+  const resumeAudit = async () => {
+    if (!currentAuditId) return;
+    
+    try {
+      setAuditStatus("running");
+      addReasoningStep("Resuming audit from checkpoint...", "info");
+      
+      const response = await fetch(`http://localhost:8000/api/audit/${id}/resume/${currentAuditId}`, {
+        method: "POST"
+      });
+      
+      if (response.ok) {
+        setQuotaExceeded(false);
+        // Reconnect to SSE
+        const eventSource = new EventSource(`http://localhost:8000/api/audit/${id}/stream/${currentAuditId}`);
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.progress_percent !== undefined) setAuditProgress(data.progress_percent);
+            if (data.current_step !== undefined) setAuditCurrentStep(data.current_step);
+            if (data.step_name) setAuditStepName(data.step_name);
+            if (data.type === 'end' || data.type === 'completed') {
+              setAuditStatus("completed");
+              eventSource.close();
+            }
+            if (data.message) addReasoningStep(data.message, "info");
+          } catch (e) {}
+        };
+      }
+    } catch (error) {
+      console.error("Failed to resume audit:", error);
+      addReasoningStep(`Resume failed: ${error}`, "warning");
+    }
+  };
+
   const runAudit = async () => {
     setIsAuditing(true);
+    setAuditStatus("running");
+    setAuditProgress(0);
+    setAuditCurrentStep(0);
+    setAuditStepName("Initializing...");
     setLiveReasoningSteps([]);
     setAuditTrail(null);
     setAuditResults(null);
+    setStreamingFindings([]);
+    setStreamingAjes([]);
+    setStreamingRiskScore(null);
     
     addReasoningStep("Initializing audit engine...", "info");
 
+    // Generate a temporary audit ID for early SSE connection
+    // We'll get the real one from the POST response
+    let eventSource: EventSource | null = null;
+    let auditId: string | null = null;
+
     try {
-      // Start the audit
+      // Start the audit - this returns quickly with the audit_id
       const response = await fetch(`http://localhost:8000/api/audit/${id}/run`, {
         method: "POST"
       });
       
       if (response.ok) {
         const result = await response.json();
-        setCurrentAuditId(result.audit_id);
+        auditId = result.audit_id;
+        setCurrentAuditId(auditId);
         
         // Connect to SSE stream for live updates
-        const eventSource = new EventSource(`http://localhost:8000/api/audit/${id}/stream/${result.audit_id}`);
+        // The backend's subscribe() method will send all existing progress
+        eventSource = new EventSource(`http://localhost:8000/api/audit/${id}/stream/${auditId}`);
         
         eventSource.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            if (data.type === 'end') {
-              eventSource.close();
+            
+            // Update progress info if available
+            if (data.progress_percent !== undefined) {
+              setAuditProgress(data.progress_percent);
+            }
+            if (data.current_step !== undefined) {
+              setAuditCurrentStep(data.current_step);
+            }
+            if (data.total_steps !== undefined) {
+              setAuditTotalSteps(data.total_steps);
+            }
+            if (data.step_name) {
+              setAuditStepName(data.step_name);
+            }
+            if (data.status) {
+              setAuditStatus(data.status as any);
+            }
+            
+            // Check for quota exceeded
+            if (data.type === 'quota_exceeded' || data.status === 'quota_exceeded') {
+              setAuditStatus("quota_exceeded");
+              setQuotaExceeded(true);
+              addReasoningStep("Quota exceeded - enter API key to continue", "warning");
+            }
+            
+            if (data.type === 'end' || data.type === 'completed') {
+              setAuditStatus("completed");
+              eventSource?.close();
             } else if (data.type === 'heartbeat') {
               // Ignore heartbeats
+            } else if (data.type === 'paused') {
+              setAuditStatus("paused");
+            } else if (data.type === 'data' && data.data) {
+              // Handle streaming data updates
+              const dataType = data.data.data_type;
+              const payload = data.data.payload;
+              
+              console.log("[SSE] Received data:", dataType, payload?.finding_id || payload?.aje_id || "risk_score");
+              
+              if (dataType === 'finding' || dataType === 'finding_enhanced') {
+                // Add or update finding in streaming list
+                setStreamingFindings(prev => {
+                  const existingIdx = prev.findIndex(f => f.finding_id === payload.finding_id);
+                  if (existingIdx >= 0) {
+                    // Update existing finding with enhanced data
+                    const updated = [...prev];
+                    updated[existingIdx] = payload;
+                    return updated;
+                  }
+                  return [...prev, payload];
+                });
+              } else if (dataType === 'aje') {
+                // Add AJE to streaming list
+                setStreamingAjes(prev => [...prev, payload]);
+              } else if (dataType === 'risk_score') {
+                // Update risk score
+                setStreamingRiskScore(payload);
+              }
             } else if (data.message) {
               const stepType = data.type === 'ai' ? 'ai' : 
                               data.type === 'success' || data.type === 'completed' ? 'success' : 
@@ -160,17 +304,9 @@ export default function CompanyPage({ params }: PageProps) {
         };
         
         eventSource.onerror = () => {
-          eventSource.close();
+          console.error("SSE connection error");
+          eventSource?.close();
         };
-        
-        addReasoningStep(`Audit completed successfully!`, "success");
-        addReasoningStep(`Found ${result.findings_count} findings`, "success");
-        addReasoningStep(`Risk Level: ${result.risk_level.toUpperCase()}`, result.risk_level === "critical" || result.risk_level === "high" ? "warning" : "success");
-        addReasoningStep(`Generated ${result.ajes_count} adjusting journal entries`, "success");
-        addReasoningStep(`Audit ID: ${result.audit_id}`, "info");
-        
-        // Fetch full results with individual error handling
-        addReasoningStep("Fetching detailed audit results...", "info");
         
         // Helper to safely fetch with timeout
         const safeFetch = async (url: string, name: string) => {
@@ -194,12 +330,46 @@ export default function CompanyPage({ params }: PageProps) {
             return null;
           }
         };
-
+        
+        // Wait for the SSE stream to signal completion, then fetch full results
+        const waitForCompletion = () => {
+          return new Promise<void>((resolve) => {
+            const originalOnMessage = eventSource!.onmessage;
+            eventSource!.onmessage = (event) => {
+              // Call original handler first
+              if (originalOnMessage) {
+                originalOnMessage.call(eventSource, event);
+              }
+              
+              try {
+                const data = JSON.parse(event.data);
+                if (data.type === 'end' || data.type === 'completed') {
+                  resolve();
+                }
+              } catch (e) {
+                // Ignore parse errors
+              }
+            };
+            
+            // Timeout after 5 minutes
+            setTimeout(() => resolve(), 300000);
+          });
+        };
+        
+        addReasoningStep(`Audit ID: ${auditId}`, "info");
+        addReasoningStep("Waiting for audit to complete...", "info");
+        
+        // Wait for the audit to complete
+        await waitForCompletion();
+        
+        addReasoningStep("Audit completed! Fetching detailed results...", "success");
+        
+        // Fetch full results
         const [findingsData, ajesData, riskData, trailData] = await Promise.all([
-          safeFetch(`http://localhost:8000/api/audit/${id}/findings?audit_id=${result.audit_id}`, "findings"),
-          safeFetch(`http://localhost:8000/api/audit/${id}/ajes?audit_id=${result.audit_id}`, "AJEs"),
-          safeFetch(`http://localhost:8000/api/audit/${id}/risk-score?audit_id=${result.audit_id}`, "risk score"),
-          safeFetch(`http://localhost:8000/api/audit/${id}/trail?audit_id=${result.audit_id}`, "audit trail")
+          safeFetch(`http://localhost:8000/api/audit/${id}/findings?audit_id=${auditId}`, "findings"),
+          safeFetch(`http://localhost:8000/api/audit/${id}/ajes?audit_id=${auditId}`, "AJEs"),
+          safeFetch(`http://localhost:8000/api/audit/${id}/risk-score?audit_id=${auditId}`, "risk score"),
+          safeFetch(`http://localhost:8000/api/audit/${id}/trail?audit_id=${auditId}`, "audit trail")
         ]);
 
         setAuditResults({
@@ -220,18 +390,19 @@ export default function CompanyPage({ params }: PageProps) {
           }
         }
 
-        // Show warnings if any fetches failed
-        const fetchedCount = [findingsData, ajesData, riskData, trailData].filter(Boolean).length;
-        if (fetchedCount < 4) {
-          addReasoningStep(`Warning: Only ${fetchedCount}/4 result endpoints responded`, "warning");
+        // Show summary
+        if (findingsData) {
+          addReasoningStep(`Found ${findingsData.total_count || findingsData.findings?.length || 0} findings`, "success");
         }
-
+        if (riskData) {
+          const riskLevel = riskData.risk_level || "unknown";
+          addReasoningStep(`Risk Level: ${riskLevel.toUpperCase()}`, riskLevel === "critical" || riskLevel === "high" ? "warning" : "success");
+        }
+        if (ajesData) {
+          addReasoningStep(`Generated ${ajesData.total_count || ajesData.ajes?.length || 0} adjusting journal entries`, "success");
+        }
         if (trailData?.audit_trail) {
-          addReasoningStep(`Audit trail recorded: ${trailData.audit_trail.reasoning_chain?.length || 0} steps`, "success");
-          addReasoningStep(`Gemini interactions logged: ${trailData.audit_trail.gemini_interactions?.length || 0}`, "ai");
-          if (trailData.audit_trail.record_integrity_hash) {
-            addReasoningStep(`Integrity hash: ${trailData.audit_trail.record_integrity_hash.substring(0, 16)}...`, "success");
-          }
+          addReasoningStep(`Audit trail: ${trailData.audit_trail.reasoning_chain?.length || 0} steps, ${trailData.audit_trail.gemini_interactions?.length || 0} AI calls`, "ai");
         }
         
         addReasoningStep("Audit complete. Review the tabs for details.", "success");
@@ -246,67 +417,198 @@ export default function CompanyPage({ params }: PageProps) {
     }
   };
 
+  // Stop ownership discovery function
+  const stopOwnershipDiscovery = async () => {
+    if (!ownershipGraphId) return;
+    
+    try {
+      const response = await fetch(`http://localhost:8000/api/ownership/cancel/${ownershipGraphId}`, {
+        method: "POST"
+      });
+      if (response.ok) {
+        setOwnershipStatus("paused");
+        addReasoningStep("Ownership discovery paused", "info");
+      }
+    } catch (error) {
+      console.error("Failed to stop ownership discovery:", error);
+    }
+  };
+
+  // Resume ownership discovery function
+  const resumeOwnershipDiscovery = async () => {
+    if (!ownershipGraphId) return;
+    
+    try {
+      setOwnershipStatus("running");
+      addReasoningStep("Resuming ownership discovery...", "info");
+      
+      const response = await fetch(`http://localhost:8000/api/ownership/resume/${ownershipGraphId}`, {
+        method: "POST"
+      });
+      
+      if (response.ok) {
+        // Reconnect to SSE
+        const eventSource = new EventSource(`http://localhost:8000/api/ownership/stream/${ownershipGraphId}`);
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            if (data.progress_percent !== undefined) setOwnershipProgress(data.progress_percent);
+            if (data.current_step !== undefined) setOwnershipCurrentStep(data.current_step);
+            if (data.step_name) setOwnershipStepName(data.step_name);
+            if (data.type === 'end' || data.type === 'completed') {
+              setOwnershipStatus("completed");
+              eventSource.close();
+            }
+          } catch (e) {}
+        };
+      }
+    } catch (error) {
+      console.error("Failed to resume ownership discovery:", error);
+    }
+  };
+
   const discoverOwnership = async () => {
     setIsDiscoveringOwnership(true);
+    setOwnershipStatus("running");
+    setOwnershipProgress(0);
+    setOwnershipCurrentStep(0);
+    setOwnershipStepName("Initializing...");
+    setStreamingNodes([]);
+    setStreamingEdges([]);
+    setOwnershipGraph(null);
+    setOwnershipFindings([]);
     addReasoningStep("Starting beneficial ownership discovery...", "info");
 
-    // First, set up SSE to receive live updates
     const graphId = `vendor_graph_${id}`;
-    const eventSource = new EventSource(`http://localhost:8000/api/ownership/stream/${graphId}`);
-    
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === 'end') {
-          eventSource.close();
-        } else if (data.type === 'heartbeat') {
-          // Ignore heartbeats
-        } else if (data.message) {
-          const stepType = data.type === 'ai' ? 'ai' : 
-                          data.type === 'success' || data.type === 'completed' ? 'success' : 
-                          data.type === 'error' || data.type === 'warning' ? 'warning' : 'info';
-          addReasoningStep(data.message, stepType);
-          
-          // Check for boilerplate detection
-          if (data.data?.type === 'boilerplate') {
-            addReasoningStep(`[Boilerplate] Skipped full discovery for template company`, "info");
-          }
-        }
-      } catch (e) {
-        console.error("SSE parse error:", e);
-      }
-    };
-    
-    eventSource.onerror = () => {
-      eventSource.close();
-    };
+    setOwnershipGraphId(graphId);
+    let eventSource: EventSource | null = null;
 
     try {
+      // Start the discovery - returns immediately now
       const response = await fetch(`http://localhost:8000/api/ownership/analyze-vendors/${id}`, {
         method: "POST"
       });
 
       if (response.ok) {
         const result = await response.json();
-        addReasoningStep(`Analyzed ${result.vendors_analyzed} vendors`, "success");
-        addReasoningStep(`Discovered ${result.entities_discovered} entities`, "success");
-        addReasoningStep(`Found ${result.findings_count} ownership-related findings`, result.findings_count > 0 ? "warning" : "success");
+        addReasoningStep(`Analyzing ${result.vendors_analyzed} vendors...`, "info");
+        
+        // Connect to SSE stream for live updates
+        eventSource = new EventSource(`http://localhost:8000/api/ownership/stream/${graphId}`);
+        
+        eventSource.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            
+            // Update progress info if available
+            if (data.progress_percent !== undefined) {
+              setOwnershipProgress(data.progress_percent);
+            }
+            if (data.current_step !== undefined) {
+              setOwnershipCurrentStep(data.current_step);
+            }
+            if (data.total_steps !== undefined) {
+              setOwnershipTotalSteps(data.total_steps);
+            }
+            if (data.step_name) {
+              setOwnershipStepName(data.step_name);
+            }
+            if (data.status) {
+              setOwnershipStatus(data.status as any);
+            }
+            
+            // Check for quota exceeded
+            if (data.type === 'quota_exceeded' || data.status === 'quota_exceeded') {
+              setOwnershipStatus("quota_exceeded");
+              setQuotaExceeded(true);
+            }
+            
+            if (data.type === 'end' || data.type === 'completed') {
+              setOwnershipStatus("completed");
+              eventSource?.close();
+            } else if (data.type === 'heartbeat') {
+              // Ignore heartbeats
+            } else if (data.type === 'paused') {
+              setOwnershipStatus("paused");
+            } else if (data.type === 'data' && data.data) {
+              // Handle streaming graph data
+              const dataType = data.data.data_type;
+              const payload = data.data.payload;
+              
+              console.log("[Ownership SSE] Received:", dataType, payload?.name || payload?.id);
+              
+              if (dataType === 'node') {
+                // Add node to streaming graph
+                setStreamingNodes(prev => {
+                  const existing = prev.find(n => n.id === payload.id);
+                  if (existing) return prev;
+                  return [...prev, payload];
+                });
+              } else if (dataType === 'edge') {
+                // Add edge to streaming graph
+                setStreamingEdges(prev => [...prev, payload]);
+              } else if (dataType === 'finding') {
+                // Add finding
+                setOwnershipFindings(prev => [...prev, payload]);
+              }
+            } else if (data.message) {
+              const stepType = data.type === 'ai' ? 'ai' : 
+                              data.type === 'success' || data.type === 'completed' ? 'success' : 
+                              data.type === 'error' || data.type === 'warning' ? 'warning' : 'info';
+              addReasoningStep(data.message, stepType);
+              
+              // Check for boilerplate detection
+              if (data.data?.type === 'boilerplate') {
+                addReasoningStep(`[Boilerplate] Skipped full discovery for template company`, "info");
+              }
+            }
+          } catch (e) {
+            console.error("SSE parse error:", e);
+          }
+        };
+        
+        eventSource.onerror = () => {
+          eventSource?.close();
+        };
 
-        // Fetch the graph data
-        const graphRes = await fetch(`http://localhost:8000/api/ownership/graph/${result.graph_id}`);
+        // Wait for SSE to signal completion
+        await new Promise<void>((resolve) => {
+          const originalOnMessage = eventSource!.onmessage;
+          eventSource!.onmessage = (event) => {
+            if (originalOnMessage) {
+              originalOnMessage.call(eventSource, event);
+            }
+            try {
+              const data = JSON.parse(event.data);
+              if (data.type === 'end' || data.type === 'completed') {
+                resolve();
+              }
+            } catch (e) {}
+          };
+          // Timeout after 5 minutes
+          setTimeout(() => resolve(), 300000);
+        });
+
+        // Fetch the final graph data
+        addReasoningStep("Fetching complete ownership graph...", "info");
+        const graphRes = await fetch(`http://localhost:8000/api/ownership/graph/${graphId}`);
         if (graphRes.ok) {
           const graphData = await graphRes.json();
           setOwnershipGraph(graphData);
+          addReasoningStep(`Graph loaded: ${graphData.nodes?.length || 0} entities, ${graphData.edges?.length || 0} relationships`, "success");
         }
 
-        // Fetch findings
-        const findingsRes = await fetch(`http://localhost:8000/api/ownership/graph/${result.graph_id}/findings`);
+        // Fetch final findings
+        const findingsRes = await fetch(`http://localhost:8000/api/ownership/graph/${graphId}/findings`);
         if (findingsRes.ok) {
           const findingsData = await findingsRes.json();
           setOwnershipFindings(findingsData.findings || []);
+          if (findingsData.findings?.length > 0) {
+            addReasoningStep(`Found ${findingsData.findings.length} ownership-related findings`, "warning");
+          }
         }
 
-        addReasoningStep("Ownership graph loaded.", "success");
+        addReasoningStep("Ownership discovery complete.", "success");
       } else {
         addReasoningStep("Ownership discovery failed.", "warning");
       }
@@ -314,6 +616,7 @@ export default function CompanyPage({ params }: PageProps) {
       addReasoningStep(`Error: ${error}`, "warning");
       console.error("Ownership error:", error);
     } finally {
+      eventSource?.close();
       eventSource.close();
       setIsDiscoveringOwnership(false);
     }
@@ -373,9 +676,14 @@ export default function CompanyPage({ params }: PageProps) {
     );
   }
 
-  const riskScore = auditResults?.riskScore;
-  const findings = auditResults?.findings?.findings || [];
-  const ajes = auditResults?.ajes?.ajes || [];
+  // Use streaming data while audit is running, fall back to final results when complete
+  const riskScore = streamingRiskScore || auditResults?.riskScore;
+  const findings = isAuditing && streamingFindings.length > 0 
+    ? streamingFindings 
+    : (auditResults?.findings?.findings || streamingFindings);
+  const ajes = isAuditing && streamingAjes.length > 0 
+    ? streamingAjes 
+    : (auditResults?.ajes?.ajes || streamingAjes);
   const trail = auditTrail?.audit_trail;
   const reasoningChain = trail?.reasoning_chain || [];
   const geminiInteractions = trail?.gemini_interactions || [];
@@ -417,6 +725,20 @@ export default function CompanyPage({ params }: PageProps) {
         </div>
       </header>
 
+      {/* Progress Bar Section */}
+      <div className="container mx-auto px-6 pt-4">
+        <AuditProgress
+          isRunning={isAuditing}
+          progress={auditProgress}
+          currentStep={auditCurrentStep}
+          totalSteps={auditTotalSteps}
+          stepName={auditStepName}
+          status={auditStatus}
+          onStop={stopAudit}
+          onResume={resumeAudit}
+        />
+      </div>
+
       <div className="container mx-auto px-6 py-6">
         {/* Company Info */}
         <div className="mb-6">
@@ -449,7 +771,10 @@ export default function CompanyPage({ params }: PageProps) {
             <CardContent className="pt-6">
               <div className="text-sm text-muted-foreground mb-1">Total Findings</div>
               <div className="text-3xl font-bold financial-number">
-                {auditResults ? findings.length : "--"}
+                {findings.length > 0 || auditResults ? findings.length : "--"}
+                {isAuditing && findings.length > 0 && (
+                  <span className="text-sm text-[#00d4ff] ml-2 animate-pulse">live</span>
+                )}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
                 {riskScore ? (
@@ -462,6 +787,8 @@ export default function CompanyPage({ params }: PageProps) {
                     {" / "}
                     <span className="text-[#22c55e]">{riskScore.low_count}L</span>
                   </span>
+                ) : isAuditing && findings.length > 0 ? (
+                  <span className="text-[#00d4ff]">Analyzing...</span>
                 ) : ""}
               </div>
             </CardContent>
@@ -471,10 +798,14 @@ export default function CompanyPage({ params }: PageProps) {
             <CardContent className="pt-6">
               <div className="text-sm text-muted-foreground mb-1">Adjusting Entries</div>
               <div className="text-3xl font-bold financial-number">
-                {auditResults ? ajes.length : "--"}
+                {ajes.length > 0 || auditResults ? ajes.length : "--"}
+                {isAuditing && ajes.length > 0 && (
+                  <span className="text-sm text-[#00d4ff] ml-2 animate-pulse">live</span>
+                )}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
-                {auditResults ? (ajes.length > 0 ? "Generated" : "None needed") : ""}
+                {auditResults ? (ajes.length > 0 ? "Generated" : "None needed") : 
+                 isAuditing && ajes.length > 0 ? <span className="text-[#00d4ff]">Generating...</span> : ""}
               </div>
             </CardContent>
           </Card>
@@ -520,10 +851,18 @@ export default function CompanyPage({ params }: PageProps) {
               <TabsContent value="findings">
                 <Card className="bg-[#111111] border-[#1f1f1f]">
                   <CardHeader>
-                    <CardTitle>Audit Findings</CardTitle>
+                    <CardTitle className="flex items-center gap-2">
+                      Audit Findings
+                      {isAuditing && findings.length > 0 && (
+                        <Badge className="bg-[#00d4ff] text-black animate-pulse">
+                          <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                          Live
+                        </Badge>
+                      )}
+                    </CardTitle>
                     <CardDescription>
                       {findings.length > 0 
-                        ? `${findings.length} findings identified`
+                        ? `${findings.length} findings identified${isAuditing ? " (updating...)" : ""}`
                         : "Run an audit to see findings"
                       }
                     </CardDescription>
@@ -544,7 +883,7 @@ export default function CompanyPage({ params }: PageProps) {
                           <TableBody>
                             {findings.map((finding: any, idx: number) => (
                               <TableRow 
-                                key={idx} 
+                                key={finding.finding_id || idx} 
                                 className="border-[#1f1f1f] cursor-pointer hover:bg-[#1a1a1a] transition-colors"
                                 onClick={() => {
                                   setSelectedFinding(finding);
@@ -574,12 +913,17 @@ export default function CompanyPage({ params }: PageProps) {
                                 </TableCell>
                                 <TableCell className="financial-number">
                                   <div>{Math.round((finding.confidence || 0) * 100)}%</div>
-                                  {finding.ai_explanation && (
+                                  {finding.ai_explanation && !finding.ai_explanation.includes("skipped") ? (
                                     <div className="flex items-center gap-1 mt-1">
                                       <Brain className="h-3 w-3 text-[#a855f7]" />
                                       <span className="text-[10px] text-[#a855f7]">AI</span>
                                     </div>
-                                  )}
+                                  ) : isAuditing ? (
+                                    <div className="flex items-center gap-1 mt-1">
+                                      <Loader2 className="h-3 w-3 text-[#00d4ff] animate-spin" />
+                                      <span className="text-[10px] text-[#00d4ff]">...</span>
+                                    </div>
+                                  ) : null}
                                 </TableCell>
                                 <TableCell>
                                   <Button 
@@ -604,7 +948,10 @@ export default function CompanyPage({ params }: PageProps) {
                     ) : (
                       <div className="text-center py-12 text-muted-foreground">
                         <Shield className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                        <p>No findings yet. Run an audit to analyze this company.</p>
+                        <p>{isAuditing ? "Findings will appear here as they are discovered..." : "No findings yet. Run an audit to analyze this company."}</p>
+                        {isAuditing && (
+                          <Loader2 className="h-6 w-6 mx-auto mt-4 animate-spin text-[#00d4ff]" />
+                        )}
                       </div>
                     )}
                   </CardContent>
@@ -634,21 +981,61 @@ export default function CompanyPage({ params }: PageProps) {
                       {isDiscoveringOwnership ? "Discovering..." : "Discover Ownership"}
                     </Button>
                   </CardHeader>
+                  
+                  {/* Ownership Progress Bar */}
+                  {ownershipStatus !== "idle" && (
+                    <div className="px-6 pb-2">
+                      <OwnershipProgress
+                        isRunning={isDiscoveringOwnership}
+                        progress={ownershipProgress}
+                        currentStep={ownershipCurrentStep}
+                        totalSteps={ownershipTotalSteps}
+                        stepName={ownershipStepName}
+                        status={ownershipStatus}
+                        onStop={stopOwnershipDiscovery}
+                        onResume={resumeOwnershipDiscovery}
+                      />
+                    </div>
+                  )}
+                  
                   <CardContent>
-                    {ownershipGraph ? (
+                    {/* Use streaming data while discovering, final graph when complete */}
+                    {(ownershipGraph || (isDiscoveringOwnership && streamingNodes.length > 0)) ? (
                       <div>
+                        {/* Show live indicator while discovering */}
+                        {isDiscoveringOwnership && (
+                          <div className="flex items-center gap-2 mb-3 text-sm text-[#00d4ff]">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Live: {streamingNodes.length} entities, {streamingEdges.length} relationships discovered</span>
+                          </div>
+                        )}
                         <OwnershipGraph 
-                          nodes={ownershipGraph.nodes || []}
-                          edges={ownershipGraph.edges || []}
+                          nodes={ownershipGraph?.nodes || streamingNodes.map(n => ({
+                            id: n.id,
+                            name: n.name,
+                            type: n.type || "company",
+                            risk_level: n.red_flags?.length > 0 ? "high" : "low",
+                            jurisdiction: n.jurisdiction,
+                            data_source: n.api_source
+                          }))}
+                          edges={ownershipGraph?.edges || streamingEdges.map(e => ({
+                            source: e.source,
+                            target: e.target,
+                            relationship: e.relationship,
+                            ownership_percentage: e.percentage
+                          }))}
                           width={700}
                           height={400}
                         />
                         {ownershipFindings.length > 0 && (
                           <div className="mt-4">
-                            <h4 className="font-medium mb-2 text-[#ff6b35]">Ownership Findings ({ownershipFindings.length})</h4>
+                            <h4 className="font-medium mb-2 text-[#ff6b35]">
+                              Ownership Findings ({ownershipFindings.length})
+                              {isDiscoveringOwnership && <span className="text-[#00d4ff] text-sm ml-2 animate-pulse">live</span>}
+                            </h4>
                             <div className="space-y-2 max-h-[200px] overflow-y-auto">
                               {ownershipFindings.map((finding: any, idx: number) => (
-                                <div key={idx} className="p-3 bg-[#0a0a0a] rounded border border-[#1f1f1f]">
+                                <div key={finding.finding_id || idx} className="p-3 bg-[#0a0a0a] rounded border border-[#1f1f1f]">
                                   <div className="flex items-center gap-2 mb-1 flex-wrap">
                                     <Badge className={`flex-shrink-0 ${finding.severity === "critical" ? "bg-[#ff3366]" : "bg-[#ff6b35]"}`}>
                                       {finding.severity?.toUpperCase()}
@@ -661,6 +1048,12 @@ export default function CompanyPage({ params }: PageProps) {
                             </div>
                           </div>
                         )}
+                      </div>
+                    ) : isDiscoveringOwnership ? (
+                      <div className="text-center py-12 text-muted-foreground">
+                        <Loader2 className="h-12 w-12 mx-auto mb-4 animate-spin text-[#8b5cf6]" />
+                        <p>Discovering ownership network...</p>
+                        <p className="text-xs mt-2">Searching public registries for ownership data</p>
                       </div>
                     ) : (
                       <div className="text-center py-12 text-muted-foreground">
@@ -903,10 +1296,16 @@ export default function CompanyPage({ params }: PageProps) {
                         <CardTitle className="flex items-center gap-2">
                           <FileText className="h-5 w-5 text-[#00d4ff]" />
                           Adjusting Journal Entries
+                          {isAuditing && ajes.length > 0 && (
+                            <Badge className="bg-[#00d4ff] text-black animate-pulse">
+                              <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                              Live
+                            </Badge>
+                          )}
                         </CardTitle>
                         <CardDescription>
-                          {auditResults 
-                            ? `${ajes.length} correcting entries generated` 
+                          {ajes.length > 0 || auditResults 
+                            ? `${ajes.length} correcting entries generated${isAuditing ? " (updating...)" : ""}` 
                             : "Run an audit first"}
                         </CardDescription>
                       </CardHeader>
@@ -916,7 +1315,7 @@ export default function CompanyPage({ params }: PageProps) {
                             <div className="space-y-4">
                               {ajes.map((aje: any, idx: number) => (
                                 <AJEDetailCard 
-                                  key={idx} 
+                                  key={aje.aje_id || idx} 
                                   aje={aje}
                                   onFindingClick={(findingId) => {
                                     const finding = findings.find((f: any) => f.finding_id === findingId);
@@ -932,9 +1331,12 @@ export default function CompanyPage({ params }: PageProps) {
                         ) : (
                           <div className="text-center py-12 text-muted-foreground">
                             <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                            <p>{auditResults ? "No AJEs were generated." : "AJEs are generated after running an audit."}</p>
-                            {auditResults && (
+                            <p>{auditResults ? "No AJEs were generated." : isAuditing ? "AJEs will appear here as they are generated..." : "AJEs are generated after running an audit."}</p>
+                            {auditResults && !isAuditing && (
                               <p className="text-xs mt-2">This may be due to no correctable issues or quota limitations.</p>
+                            )}
+                            {isAuditing && (
+                              <Loader2 className="h-6 w-6 mx-auto mt-4 animate-spin text-[#00d4ff]" />
                             )}
                           </div>
                         )}
@@ -1089,6 +1491,14 @@ export default function CompanyPage({ params }: PageProps) {
         open={quotaExceeded}
         onClose={() => setQuotaExceeded(false)}
         onRetry={runAudit}
+        onResume={() => {
+          if (auditStatus === "quota_exceeded") {
+            resumeAudit();
+          } else if (ownershipStatus === "quota_exceeded") {
+            resumeOwnershipDiscovery();
+          }
+        }}
+        operationType={ownershipStatus === "quota_exceeded" ? "ownership" : "audit"}
       />
     </main>
   );

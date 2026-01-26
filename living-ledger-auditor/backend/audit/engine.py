@@ -34,7 +34,12 @@ class AuditEngine:
         self,
         company_data: dict,
         audit_record: AuditRecord,
-        progress_callback: callable = None
+        progress_callback: callable = None,
+        data_callback: callable = None,
+        is_cancelled: callable = None,
+        save_checkpoint: callable = None,
+        on_quota_exceeded: callable = None,
+        resume_from: dict = None
     ) -> dict:
         """
         Run a complete audit on company data.
@@ -52,6 +57,11 @@ class AuditEngine:
             company_data: Company data to audit
             audit_record: Audit trail record
             progress_callback: Optional callback for progress updates (msg, percent)
+            data_callback: Optional callback for streaming data updates (type, data)
+            is_cancelled: Optional callback to check if audit should stop
+            save_checkpoint: Optional callback to save checkpoint (phase, data)
+            on_quota_exceeded: Optional callback when API quota is exceeded
+            resume_from: Optional checkpoint data to resume from
         """
         logger.info("[run_full_audit] Starting full audit execution")
         
@@ -61,6 +71,51 @@ class AuditEngine:
                     progress_callback(msg, pct)
                 except Exception:
                     pass
+        
+        def stream_data(data_type: str, data: dict):
+            """Stream data to frontend in real-time."""
+            if data_callback:
+                try:
+                    data_callback(data_type, data)
+                except Exception:
+                    pass
+        
+        def check_cancelled() -> bool:
+            """Check if the audit has been cancelled."""
+            if is_cancelled:
+                return is_cancelled()
+            return False
+        
+        def checkpoint(phase: str, data: dict):
+            """Save a checkpoint."""
+            if save_checkpoint:
+                try:
+                    save_checkpoint(phase, data)
+                except Exception:
+                    pass
+        
+        def handle_quota_exceeded():
+            """Handle quota exceeded error."""
+            if on_quota_exceeded:
+                try:
+                    on_quota_exceeded()
+                except Exception:
+                    pass
+        
+        # Determine which phase to start from if resuming
+        start_phase = 1
+        if resume_from and resume_from.get("phase"):
+            phase_map = {
+                "structural": 2,
+                "gaap": 3,
+                "anomaly": 4,
+                "fraud": 5,
+                "ai_enhance": 6,
+                "aje": 7,
+                "risk": 8,
+            }
+            start_phase = phase_map.get(resume_from.get("phase"), 1)
+            logger.info(f"[run_full_audit] Resuming from phase {start_phase}")
         
         metadata = company_data["metadata"]
         coa = company_data.get("coa")
@@ -77,10 +132,16 @@ class AuditEngine:
         
         all_findings = []
         
-        # Step 1: Validate structure
-        logger.info("[run_full_audit] Step 1: Validating data structure")
-        report_progress("Step 1/7: Validating data structure...", 10.0)
-        audit_record.add_reasoning_step("Starting structural validation", {
+        # ========== Step 1: Validate structure ==========
+        if check_cancelled():
+            logger.info("[run_full_audit] Audit cancelled before structural validation")
+            checkpoint("structural", {"findings": all_findings})
+            return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
+        
+        if start_phase <= 1:
+            logger.info("[run_full_audit] Step 1: Validating data structure")
+            report_progress("Step 1/8: Validating data structure...", 10.0)
+            audit_record.add_reasoning_step("Starting structural validation", {
             "description": "Checking data integrity and basic accounting principles",
             "data_input": {
                 "gl_entries_count": len(gl.entries) if gl else 0,
@@ -102,9 +163,21 @@ class AuditEngine:
         logger.info(f"[run_full_audit] Structural findings: {len(structural_findings)}")
         report_progress(f"Found {len(structural_findings)} structural issues", 15.0)
         
-        # Step 2: GAAP compliance
-        logger.info("[run_full_audit] Step 2: Running GAAP compliance checks")
-        report_progress("Step 2/7: Running GAAP compliance checks...", 20.0)
+            # Stream structural findings to frontend
+            for finding in structural_findings:
+                stream_data("finding", finding)
+            
+            checkpoint("structural", {"findings": all_findings})
+        
+        # ========== Step 2: GAAP compliance ==========
+        if check_cancelled():
+            logger.info("[run_full_audit] Audit cancelled before GAAP checks")
+            checkpoint("gaap", {"findings": all_findings})
+            return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
+        
+        if start_phase <= 2:
+            logger.info("[run_full_audit] Step 2: Running GAAP compliance checks")
+            report_progress("Step 2/8: Running GAAP compliance checks...", 20.0)
         
         # Capture sample transactions for audit trail
         sample_transactions = []
@@ -148,6 +221,10 @@ class AuditEngine:
         logger.info(f"[run_full_audit] GAAP findings: {len(gaap_findings)}")
         report_progress(f"Found {len(gaap_findings)} GAAP compliance issues", 30.0)
         
+        # Stream GAAP findings to frontend
+        for finding in gaap_findings:
+            stream_data("finding", finding)
+        
         # Step 3: Anomaly detection
         logger.info("[run_full_audit] Step 3: Running statistical anomaly detection")
         report_progress("Step 3/7: Running anomaly detection (Benford's Law, Z-score)...", 35.0)
@@ -169,6 +246,10 @@ class AuditEngine:
         })
         logger.info(f"[run_full_audit] Anomaly findings: {len(anomaly_findings)}")
         report_progress(f"Found {len(anomaly_findings)} statistical anomalies", 40.0)
+        
+        # Stream anomaly findings to frontend
+        for finding in anomaly_findings:
+            stream_data("finding", finding)
         
         # Step 4: Fraud detection
         logger.info("[run_full_audit] Step 4: Running fraud pattern detection")
@@ -193,6 +274,10 @@ class AuditEngine:
         logger.info(f"[run_full_audit] Fraud findings: {len(fraud_findings)}")
         report_progress(f"Found {len(fraud_findings)} potential fraud indicators", 50.0)
         
+        # Stream fraud findings to frontend
+        for finding in fraud_findings:
+            stream_data("finding", finding)
+        
         # Step 5: Enhance findings with AI reasoning
         logger.info("[run_full_audit] Step 5: Generating AI explanations for findings")
         report_progress(f"Step 5/7: Generating AI explanations for {len(all_findings)} findings...", 55.0)
@@ -202,7 +287,9 @@ class AuditEngine:
             "findings_to_process": len(all_findings),
             "ai_purpose": "Generate clear, professional explanations including business risk and recommendations"
         })
-        enhanced_findings = await self._enhance_findings_with_ai(all_findings, audit_record, report_progress)
+        enhanced_findings = await self._enhance_findings_with_ai(
+            all_findings, audit_record, report_progress, stream_data
+        )
         logger.info(f"[run_full_audit] Enhanced {len(enhanced_findings)} findings with AI")
         report_progress(f"Enhanced {len(enhanced_findings)} findings with AI explanations", 75.0)
         
@@ -230,6 +317,8 @@ class AuditEngine:
         
         for aje in ajes:
             audit_record.add_aje(aje)
+            # Stream each AJE to frontend as it's added
+            stream_data("aje", aje)
         
         audit_record.add_reasoning_step(f"Generated {len(ajes)} adjusting journal entries", {
             "aje_count": len(ajes),
@@ -254,6 +343,9 @@ class AuditEngine:
         risk_score = self.risk_scorer.calculate(enhanced_findings)
         logger.info(f"[run_full_audit] Risk score: {risk_score}")
         report_progress(f"Risk level: {risk_score.get('risk_level', 'unknown').upper()}", 95.0)
+        
+        # Stream risk score to frontend
+        stream_data("risk_score", risk_score)
         
         logger.info("[run_full_audit] Audit execution complete")
         report_progress("Audit complete!", 100.0)
@@ -316,7 +408,8 @@ class AuditEngine:
         self,
         findings: list[dict],
         audit_record: AuditRecord,
-        progress_callback: callable = None
+        progress_callback: callable = None,
+        data_callback: callable = None
     ) -> list[dict]:
         """Use Gemini to enhance findings with explanations."""
         logger.info(f"[_enhance_findings_with_ai] Enhancing {len(findings)} findings with AI explanations")
@@ -325,6 +418,13 @@ class AuditEngine:
             if progress_callback:
                 try:
                     progress_callback(msg, pct)
+                except Exception:
+                    pass
+        
+        def stream_data(data_type: str, data: dict):
+            if data_callback:
+                try:
+                    data_callback(data_type, data)
                 except Exception:
                     pass
         
@@ -388,6 +488,8 @@ Keep it concise (3-4 sentences).
                 finding["ai_explanation"] = "AI explanation unavailable."
             
             enhanced.append(finding)
+            # Stream the enhanced finding with AI explanation to frontend
+            stream_data("finding_enhanced", finding)
         
         if quota_exceeded:
             logger.warning(f"[_enhance_findings_with_ai] Quota exceeded. Only {sum(1 for f in enhanced if 'skipped' not in f.get('ai_explanation', ''))} findings have AI explanations")
