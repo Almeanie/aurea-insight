@@ -142,27 +142,27 @@ class AuditEngine:
             logger.info("[run_full_audit] Step 1: Validating data structure")
             report_progress("Step 1/8: Validating data structure...", 10.0)
             audit_record.add_reasoning_step("Starting structural validation", {
-            "description": "Checking data integrity and basic accounting principles",
-            "data_input": {
-                "gl_entries_count": len(gl.entries) if gl else 0,
-                "tb_rows_count": len(tb.rows) if tb else 0,
-                "coa_accounts_count": len(coa.accounts) if coa else 0,
-            },
-            "checks_performed": [
-                "Trial Balance balance verification",
-                "Cash balance validation",
-                "Account code consistency"
-            ]
-        })
-        structural_findings = self._validate_structure(gl, tb, coa)
-        all_findings.extend(structural_findings)
-        audit_record.add_reasoning_step(f"Found {len(structural_findings)} structural issues", {
-            "findings_count": len(structural_findings),
-            "findings_summary": [f.get("issue") for f in structural_findings]
-        })
-        logger.info(f"[run_full_audit] Structural findings: {len(structural_findings)}")
-        report_progress(f"Found {len(structural_findings)} structural issues", 15.0)
-        
+                "description": "Checking data integrity and basic accounting principles",
+                "data_input": {
+                    "gl_entries_count": len(gl.entries) if gl else 0,
+                    "tb_rows_count": len(tb.rows) if tb else 0,
+                    "coa_accounts_count": len(coa.accounts) if coa else 0,
+                },
+                "checks_performed": [
+                    "Trial Balance balance verification",
+                    "Cash balance validation",
+                    "Account code consistency"
+                ]
+            })
+            structural_findings = self._validate_structure(gl, tb, coa)
+            all_findings.extend(structural_findings)
+            audit_record.add_reasoning_step(f"Found {len(structural_findings)} structural issues", {
+                "findings_count": len(structural_findings),
+                "findings_summary": [f.get("issue") for f in structural_findings]
+            })
+            logger.info(f"[run_full_audit] Structural findings: {len(structural_findings)}")
+            report_progress(f"Found {len(structural_findings)} structural issues", 15.0)
+            
             # Stream structural findings to frontend
             for finding in structural_findings:
                 stream_data("finding", finding)
@@ -175,9 +175,9 @@ class AuditEngine:
             checkpoint("gaap", {"findings": all_findings})
             return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
         
-        if start_phase <= 2:
-            logger.info("[run_full_audit] Step 2: Running GAAP compliance checks")
-            report_progress("Step 2/8: Running GAAP compliance checks...", 20.0)
+        # Step 2: GAAP compliance (always runs)
+        logger.info("[run_full_audit] Step 2: Running GAAP compliance checks")
+        report_progress("Step 2/8: Running GAAP compliance checks...", 20.0)
         
         # Capture sample transactions for audit trail
         sample_transactions = []
@@ -224,6 +224,11 @@ class AuditEngine:
         # Stream GAAP findings to frontend
         for finding in gaap_findings:
             stream_data("finding", finding)
+        
+        if check_cancelled():
+            logger.info("[run_full_audit] Audit cancelled after GAAP checks")
+            checkpoint("anomaly", {"findings": all_findings})
+            return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
         
         # Step 3: Anomaly detection
         logger.info("[run_full_audit] Step 3: Running statistical anomaly detection")
