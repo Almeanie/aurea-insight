@@ -551,6 +551,19 @@ export default function CompanyPage({ params }: PageProps) {
               } else if (dataType === 'edge') {
                 // Add edge to streaming graph
                 setStreamingEdges(prev => [...prev, payload]);
+              } else if (dataType === 'circular_edge') {
+                // Mark edges as circular (fraud pattern)
+                setStreamingEdges(prev => {
+                  return prev.map(e => {
+                    // Check if this edge matches the circular pattern
+                    if ((e.source === payload.source && e.target === payload.target) ||
+                        (e.source === payload.target && e.target === payload.source)) {
+                      return { ...e, is_circular: true };
+                    }
+                    return e;
+                  });
+                });
+                addReasoningStep(`Circular pattern detected: ${payload.source} <-> ${payload.target}`, "warning");
               } else if (dataType === 'finding') {
                 // Add finding
                 setOwnershipFindings(prev => [...prev, payload]);

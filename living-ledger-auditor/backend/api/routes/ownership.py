@@ -101,7 +101,7 @@ async def get_ownership_findings(graph_id: str):
     }
 
 
-async def _run_ownership_discovery_task(company_id: str, vendors: list, graph_id: str):
+async def _run_ownership_discovery_task(company_id: str, company_name: str, vendors: list, graph_id: str):
     """Background task to run ownership discovery."""
     from ownership.discovery import BeneficialOwnershipDiscovery
     
@@ -138,6 +138,26 @@ async def _run_ownership_discovery_task(company_id: str, vendors: list, graph_id
         def on_quota_exceeded():
             """Handle quota exceeded."""
             progress_tracker.set_quota_exceeded(graph_id)
+        
+        # Stream the audited company as the ROOT node first
+        root_node = {
+            "id": company_id,
+            "name": company_name,
+            "type": "company",
+            "is_root": True,
+            "jurisdiction": "US",  # Default, can be overridden
+        }
+        data_callback("node", root_node)
+        
+        # Stream vendor relationship edges from audited company to each vendor
+        # This shows the payment/service relationships
+        for vendor in vendors[:20]:
+            vendor_edge = {
+                "source": company_id,
+                "target": vendor,
+                "relationship": "vendor",
+            }
+            data_callback("edge", vendor_edge)
         
         result = await discovery.discover_ownership_network(
             seed_entities=vendors[:20],  # Limit to first 20 vendors
@@ -209,12 +229,16 @@ async def analyze_vendors(company_id: str):
     # Store the graph ID
     graph_id = f"vendor_graph_{company_id}"
     
+    # Get company name for the root node
+    company_info = company_data.get("company")
+    company_name = company_info.name if company_info else company_id
+    
     # Start progress tracking immediately
     progress_tracker.start_operation(graph_id, "ownership_discovery")
     progress_tracker.add_step(graph_id, "info", f"Found {len(vendors)} unique vendors in GL")
     
     # Run discovery in background
-    asyncio.create_task(_run_ownership_discovery_task(company_id, vendors, graph_id))
+    asyncio.create_task(_run_ownership_discovery_task(company_id, company_name, vendors, graph_id))
     
     # Return immediately so frontend can connect to SSE
     return {

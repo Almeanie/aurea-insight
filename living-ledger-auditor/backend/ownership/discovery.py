@@ -312,9 +312,19 @@ class BeneficialOwnershipDiscovery:
                     stream_data("node", node_data)
                     
                     # Stream edges for beneficial owners
+                    # First, create stub nodes for owners that haven't been processed
                     for owner in entity_data.get("beneficial_owners", []):
                         owner_name = owner.get("name", "")
-                        if owner_name:
+                        if owner_name and owner_name not in processed_entities:
+                            # Stream stub node for owner BEFORE the edge
+                            stub_node = {
+                                "id": owner_name,
+                                "name": owner_name,
+                                "type": "individual",  # Owners are typically individuals
+                                "is_stub": True,  # Will be enriched later if processed
+                            }
+                            stream_data("node", stub_node)
+                            
                             edge_data = {
                                 "source": owner_name,
                                 "target": entity_name,
@@ -322,14 +332,31 @@ class BeneficialOwnershipDiscovery:
                                 "percentage": owner.get("percentage"),
                             }
                             stream_data("edge", edge_data)
-                            
-                            if owner_name not in processed_entities:
-                                next_batch.append(owner_name)
+                            next_batch.append(owner_name)
+                        elif owner_name:
+                            # Owner already processed, just stream the edge
+                            edge_data = {
+                                "source": owner_name,
+                                "target": entity_name,
+                                "relationship": "beneficial_owner",
+                                "percentage": owner.get("percentage"),
+                            }
+                            stream_data("edge", edge_data)
                     
                     # Stream edges for parent companies
+                    # First, create stub nodes for parents that haven't been processed
                     for parent in entity_data.get("parent_companies", []):
                         parent_name = parent.get("name", "")
-                        if parent_name:
+                        if parent_name and parent_name not in processed_entities:
+                            # Stream stub node for parent BEFORE the edge
+                            stub_node = {
+                                "id": parent_name,
+                                "name": parent_name,
+                                "type": "company",  # Parents are typically companies
+                                "is_stub": True,  # Will be enriched later if processed
+                            }
+                            stream_data("node", stub_node)
+                            
                             edge_data = {
                                 "source": parent_name,
                                 "target": entity_name,
@@ -337,9 +364,16 @@ class BeneficialOwnershipDiscovery:
                                 "percentage": parent.get("ownership_percentage"),
                             }
                             stream_data("edge", edge_data)
-                            
-                            if parent_name not in processed_entities:
-                                next_batch.append(parent_name)
+                            next_batch.append(parent_name)
+                        elif parent_name:
+                            # Parent already processed, just stream the edge
+                            edge_data = {
+                                "source": parent_name,
+                                "target": entity_name,
+                                "relationship": "parent_company",
+                                "percentage": parent.get("ownership_percentage"),
+                            }
+                            stream_data("edge", edge_data)
             
             entities_to_process = next_batch
         
@@ -351,6 +385,22 @@ class BeneficialOwnershipDiscovery:
         # Stream findings to frontend
         for finding in findings:
             stream_data("finding", finding)
+            
+            # If this is a circular ownership finding, stream the circular edges
+            if finding.get("issue") == "Circular Ownership Structure":
+                cycle = finding.get("entities", [])
+                if len(cycle) >= 2:
+                    # Stream each edge in the cycle as circular
+                    for i in range(len(cycle)):
+                        source = cycle[i]
+                        target = cycle[(i + 1) % len(cycle)]
+                        circular_edge = {
+                            "source": source,
+                            "target": target,
+                            "relationship": "circular",
+                            "is_circular": True,
+                        }
+                        stream_data("circular_edge", circular_edge)
         
         # Build response graph
         graph = self._build_graph_response()
