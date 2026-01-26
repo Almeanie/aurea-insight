@@ -8,6 +8,7 @@
       "accounting_basis": "accrual",
       "gl_file": "../general_ledger.csv",
       "coa_file": "../chart_of_accounts.csv",
+      "tb_file": "../trial_balance.csv",
       "expected_findings": "6-12 findings, HIGH risk",
       "issues": [
         "Expense misclassification (travel coded as office supplies)",
@@ -23,6 +24,8 @@
       "industry": "saas",
       "accounting_basis": "accrual",
       "gl_file": "startup_saas_gl.csv",
+      "coa_file": "startup_saas_coa.csv",
+      "tb_file": "startup_saas_tb.csv",
       "expected_findings": "3-6 findings, MEDIUM risk",
       "issues": [
         "Deferred revenue recognition timing",
@@ -37,6 +40,8 @@
       "industry": "services",
       "accounting_basis": "accrual",
       "gl_file": "fraud_indicators_gl.csv",
+      "coa_file": "fraud_indicators_coa.csv",
+      "tb_file": "fraud_indicators_tb.csv",
       "expected_findings": "15-25 findings, CRITICAL risk",
       "issues": [
         "Related party transactions (Smith Holdings)",
@@ -54,6 +59,8 @@
       "industry": "retail",
       "accounting_basis": "accrual",
       "gl_file": "clean_retail_gl.csv",
+      "coa_file": "clean_retail_coa.csv",
+      "tb_file": "clean_retail_tb.csv",
       "expected_findings": "0-2 findings, LOW risk",
       "issues": [
         "Generally clean books",

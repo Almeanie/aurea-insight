@@ -79,6 +79,21 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
             progress_tracker.set_quota_exceeded(audit_id)
             save_checkpoint("quota_exceeded", {"partial_results": True})
         
+        # Gemini call logging callback
+        def gemini_callback(purpose: str, prompt: str, response: str, error: str = None):
+            """Stream Gemini API call details to frontend."""
+            progress_tracker.add_step(
+                audit_id,
+                "gemini_call",
+                f"Gemini API: {purpose}",
+                data={
+                    "purpose": purpose,
+                    "prompt": prompt[:500] + "..." if len(prompt) > 500 else prompt,
+                    "response": response[:800] + "..." if response and len(response) > 800 else response,
+                    "error": error
+                }
+            )
+        
         # Run the audit
         logger.info(f"[_run_audit_task] Running full audit...")
         progress_tracker.add_step(audit_id, "info", "Starting GAAP compliance checks...", progress_percent=10.0, current_step=2, step_name="GAAP Compliance")
@@ -91,6 +106,7 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
             is_cancelled=is_cancelled,
             save_checkpoint=save_checkpoint,
             on_quota_exceeded=on_quota_exceeded,
+            gemini_callback=gemini_callback,
             resume_from=checkpoint
         )
         

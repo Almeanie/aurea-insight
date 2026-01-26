@@ -13,6 +13,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuLabel,
 } from "@/components/ui/dropdown-menu";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
   Building2, 
   Upload, 
@@ -99,11 +100,26 @@ export default function Home() {
       const response = await fetch(url, {
         method: "POST",
       });
+      
+      if (!response.ok) {
+        const errorData = await response.json().catch(() => ({}));
+        console.error("Error loading example:", response.status, errorData);
+        alert(`Failed to load scenario: ${errorData.detail || response.statusText}`);
+        return;
+      }
+      
       const data = await response.json();
+      if (!data || !data.id) {
+        console.error("Invalid response - missing company ID:", data);
+        alert("Failed to load scenario: Invalid response from server");
+        return;
+      }
+      
       setCompanies([...companies, data]);
       router.push(`/company/${data.id}`);
     } catch (error) {
       console.error("Error loading example:", error);
+      alert(`Failed to load scenario: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsGenerating(false);
     }
@@ -207,64 +223,67 @@ export default function Home() {
                     )}
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="center" className="w-[280px] bg-[#111111] border-[#1f1f1f]">
-                  <DropdownMenuLabel>Choose Data Source</DropdownMenuLabel>
-                  <DropdownMenuSeparator className="bg-[#1f1f1f]" />
-                  
-                  <DropdownMenuItem 
-                    onClick={handleGenerateCompany}
-                    className="cursor-pointer focus:bg-[#1f1f1f] py-3"
-                  >
-                    <Building2 className="mr-3 h-5 w-5 text-[#00d4ff]" />
-                    <div>
-                      <div className="font-medium">Generate Random Data</div>
-                      <div className="text-xs text-muted-foreground">AI creates synthetic company</div>
+                <DropdownMenuContent align="center" className="w-[280px] p-0 bg-[#111111] border-[#1f1f1f]">
+                  <ScrollArea className="h-[400px]">
+                    <div className="p-1">
+                      <DropdownMenuLabel>Choose Data Source</DropdownMenuLabel>
+                      <DropdownMenuSeparator className="bg-[#1f1f1f]" />
+                      
+                      <DropdownMenuItem 
+                        onClick={handleGenerateCompany}
+                        className="cursor-pointer focus:bg-[#1f1f1f] py-3"
+                      >
+                        <Building2 className="mr-3 h-5 w-5 text-[#00d4ff]" />
+                        <div>
+                          <div className="font-medium">Generate Random Data</div>
+                          <div className="text-xs text-muted-foreground">AI creates synthetic company</div>
+                        </div>
+                      </DropdownMenuItem>
+                      
+                      <DropdownMenuItem 
+                        onClick={handleUploadClick}
+                        className="cursor-pointer focus:bg-[#1f1f1f] py-3"
+                      >
+                        <FileUp className="mr-3 h-5 w-5 text-[#a855f7]" />
+                        <div>
+                          <div className="font-medium">Upload Your Data</div>
+                          <div className="text-xs text-muted-foreground">AI normalizes your files</div>
+                        </div>
+                      </DropdownMenuItem>
+                      
+                      <DropdownMenuSeparator className="bg-[#1f1f1f]" />
+                      <DropdownMenuLabel className="text-xs text-muted-foreground">Demo Scenarios</DropdownMenuLabel>
+                      
+                      {scenarios.length > 0 ? scenarios.map((scenario) => (
+                        <DropdownMenuItem 
+                          key={scenario.id}
+                          onClick={() => handleLoadExample(scenario.id)}
+                          className="cursor-pointer focus:bg-[#1f1f1f] py-3"
+                        >
+                          <Database className={`mr-3 h-5 w-5 ${
+                            scenario.id === "fraud_indicators" ? "text-[#ff3366]" :
+                            scenario.id === "clean_retail" ? "text-[#22c55e]" :
+                            "text-[#00d4ff]"
+                          }`} />
+                          <div>
+                            <div className="font-medium">{scenario.name}</div>
+                            <div className="text-xs text-muted-foreground">{scenario.expected_findings}</div>
+                          </div>
+                        </DropdownMenuItem>
+                      )) : (
+                        <DropdownMenuItem 
+                          onClick={() => handleLoadExample()}
+                          className="cursor-pointer focus:bg-[#1f1f1f] py-3"
+                        >
+                          <Database className="mr-3 h-5 w-5 text-[#22c55e]" />
+                          <div>
+                            <div className="font-medium">Use Example Data</div>
+                            <div className="text-xs text-muted-foreground">Fixed dataset, no AI needed</div>
+                          </div>
+                        </DropdownMenuItem>
+                      )}
                     </div>
-                  </DropdownMenuItem>
-                  
-                  <DropdownMenuLabel className="text-xs text-muted-foreground mt-2">Demo Scenarios</DropdownMenuLabel>
-                  
-                  {scenarios.length > 0 ? scenarios.map((scenario) => (
-                    <DropdownMenuItem 
-                      key={scenario.id}
-                      onClick={() => handleLoadExample(scenario.id)}
-                      className="cursor-pointer focus:bg-[#1f1f1f] py-3"
-                    >
-                      <Database className={`mr-3 h-5 w-5 ${
-                        scenario.id === "fraud_indicators" ? "text-[#ff3366]" :
-                        scenario.id === "clean_retail" ? "text-[#22c55e]" :
-                        "text-[#00d4ff]"
-                      }`} />
-                      <div>
-                        <div className="font-medium">{scenario.name}</div>
-                        <div className="text-xs text-muted-foreground">{scenario.expected_findings}</div>
-                      </div>
-                    </DropdownMenuItem>
-                  )) : (
-                    <DropdownMenuItem 
-                      onClick={() => handleLoadExample()}
-                      className="cursor-pointer focus:bg-[#1f1f1f] py-3"
-                    >
-                      <Database className="mr-3 h-5 w-5 text-[#22c55e]" />
-                      <div>
-                        <div className="font-medium">Use Example Data</div>
-                        <div className="text-xs text-muted-foreground">Fixed dataset, no AI needed</div>
-                      </div>
-                    </DropdownMenuItem>
-                  )}
-                  
-                  <DropdownMenuSeparator className="bg-[#1f1f1f]" />
-                  
-                  <DropdownMenuItem 
-                    onClick={handleUploadClick}
-                    className="cursor-pointer focus:bg-[#1f1f1f] py-3"
-                  >
-                    <FileUp className="mr-3 h-5 w-5 text-[#a855f7]" />
-                    <div>
-                      <div className="font-medium">Upload Your Data</div>
-                      <div className="text-xs text-muted-foreground">AI normalizes your files</div>
-                    </div>
-                  </DropdownMenuItem>
+                  </ScrollArea>
                 </DropdownMenuContent>
               </DropdownMenu>
 

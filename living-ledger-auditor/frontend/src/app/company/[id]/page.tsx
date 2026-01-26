@@ -292,6 +292,18 @@ export default function CompanyPage({ params }: PageProps) {
                 // Update risk score
                 setStreamingRiskScore(payload);
               }
+            } else if (data.type === 'gemini_call' && data.data) {
+              // Handle Gemini API call logging
+              const geminiData = data.data;
+              const timestamp = new Date().toLocaleTimeString();
+              const promptPreview = geminiData.prompt?.substring(0, 100) || '';
+              const responsePreview = geminiData.response?.substring(0, 150) || '';
+              setLiveReasoningSteps(prev => [
+                ...prev,
+                `${timestamp} [GEMINI] ${geminiData.purpose}`,
+                `  Prompt: ${promptPreview}${promptPreview.length >= 100 ? '...' : ''}`,
+                `  Response: ${responsePreview}${responsePreview.length >= 150 ? '...' : ''}`
+              ]);
             } else if (data.message) {
               const stepType = data.type === 'ai' ? 'ai' : 
                               data.type === 'success' || data.type === 'completed' ? 'success' : 
@@ -638,7 +650,6 @@ export default function CompanyPage({ params }: PageProps) {
       console.error("Ownership error:", error);
     } finally {
       eventSource?.close();
-      eventSource.close();
       setIsDiscoveringOwnership(false);
     }
   };
@@ -1065,10 +1076,10 @@ export default function CompanyPage({ params }: PageProps) {
                     </div>
                   )}
                   
-                  <CardContent>
+                  <CardContent className="overflow-hidden">
                     {/* Use streaming data while discovering, final graph when complete */}
                     {(ownershipGraph || (isDiscoveringOwnership && streamingNodes.length > 0)) ? (
-                      <div>
+                      <div className="overflow-x-auto">
                         {/* Show live indicator while discovering */}
                         {isDiscoveringOwnership && (
                           <div className="flex items-center gap-2 mb-3 text-sm text-[#00d4ff]">
@@ -1076,24 +1087,26 @@ export default function CompanyPage({ params }: PageProps) {
                             <span>Live: {streamingNodes.length} entities, {streamingEdges.length} relationships discovered</span>
                           </div>
                         )}
-                        <OwnershipGraph 
-                          nodes={ownershipGraph?.nodes || streamingNodes.map(n => ({
-                            id: n.id,
-                            name: n.name,
-                            type: n.type || "company",
-                            risk_level: n.red_flags?.length > 0 ? "high" : "low",
-                            jurisdiction: n.jurisdiction,
-                            data_source: n.api_source
-                          }))}
-                          edges={ownershipGraph?.edges || streamingEdges.map(e => ({
-                            source: e.source,
-                            target: e.target,
-                            relationship: e.relationship,
-                            ownership_percentage: e.percentage
-                          }))}
-                          width={700}
-                          height={400}
-                        />
+                        <div className="max-w-full">
+                          <OwnershipGraph 
+                            nodes={ownershipGraph?.nodes || streamingNodes.map(n => ({
+                              id: n.id,
+                              name: n.name,
+                              type: n.type || "company",
+                              risk_level: n.red_flags?.length > 0 ? "high" : "low",
+                              jurisdiction: n.jurisdiction,
+                              data_source: n.api_source
+                            }))}
+                            edges={ownershipGraph?.edges || streamingEdges.map(e => ({
+                              source: e.source,
+                              target: e.target,
+                              relationship: e.relationship,
+                              ownership_percentage: e.percentage
+                            }))}
+                            width={600}
+                            height={400}
+                          />
+                        </div>
                         {ownershipFindings.length > 0 && (
                           <div className="mt-4">
                             <h4 className="font-medium mb-2 text-[#ff6b35]">

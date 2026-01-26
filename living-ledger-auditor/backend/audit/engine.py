@@ -39,6 +39,7 @@ class AuditEngine:
         is_cancelled: callable = None,
         save_checkpoint: callable = None,
         on_quota_exceeded: callable = None,
+        gemini_callback: callable = None,
         resume_from: dict = None
     ) -> dict:
         """
@@ -61,6 +62,7 @@ class AuditEngine:
             is_cancelled: Optional callback to check if audit should stop
             save_checkpoint: Optional callback to save checkpoint (phase, data)
             on_quota_exceeded: Optional callback when API quota is exceeded
+            gemini_callback: Optional callback for Gemini API calls (purpose, prompt, response)
             resume_from: Optional checkpoint data to resume from
         """
         logger.info("[run_full_audit] Starting full audit execution")
@@ -77,6 +79,14 @@ class AuditEngine:
             if data_callback:
                 try:
                     data_callback(data_type, data)
+                except Exception:
+                    pass
+        
+        def log_gemini_call(purpose: str, prompt: str, response: str, error: str = None):
+            """Log Gemini API call details to frontend."""
+            if gemini_callback:
+                try:
+                    gemini_callback(purpose, prompt, response, error)
                 except Exception:
                     pass
         
@@ -293,7 +303,7 @@ class AuditEngine:
             "ai_purpose": "Generate clear, professional explanations including business risk and recommendations"
         })
         enhanced_findings = await self._enhance_findings_with_ai(
-            all_findings, audit_record, report_progress, stream_data
+            all_findings, audit_record, report_progress, stream_data, log_gemini_call
         )
         logger.info(f"[run_full_audit] Enhanced {len(enhanced_findings)} findings with AI")
         report_progress(f"Enhanced {len(enhanced_findings)} findings with AI explanations", 75.0)
@@ -414,7 +424,8 @@ class AuditEngine:
         findings: list[dict],
         audit_record: AuditRecord,
         progress_callback: callable = None,
-        data_callback: callable = None
+        data_callback: callable = None,
+        gemini_callback: callable = None
     ) -> list[dict]:
         """Use Gemini to enhance findings with explanations."""
         logger.info(f"[_enhance_findings_with_ai] Enhancing {len(findings)} findings with AI explanations")
@@ -430,6 +441,13 @@ class AuditEngine:
             if data_callback:
                 try:
                     data_callback(data_type, data)
+                except Exception:
+                    pass
+        
+        def log_gemini_call(purpose: str, prompt: str, response: str, error: str = None):
+            if gemini_callback:
+                try:
+                    gemini_callback(purpose, prompt, response, error)
                 except Exception:
                     pass
         
@@ -449,11 +467,7 @@ class AuditEngine:
             
             logger.debug(f"[_enhance_findings_with_ai] Processing finding {i+1}/{len(findings)}: {finding.get('issue')}")
             
-            try:
-                # Generate AI explanation
-                result = await self.gemini.generate(
-                    prompt=f"""
-Explain this audit finding in clear, professional language:
+            prompt_text = f"""Explain this audit finding in clear, professional language:
 
 Issue: {finding.get('issue')}
 Details: {finding.get('details')}
@@ -465,9 +479,21 @@ Provide:
 2. The business risk
 3. Recommended action
 
-Keep it concise (3-4 sentences).
-""",
+Keep it concise (3-4 sentences)."""
+
+            try:
+                # Generate AI explanation
+                result = await self.gemini.generate(
+                    prompt=prompt_text,
                     purpose="finding_explanation"
+                )
+                
+                # Log the Gemini call to frontend
+                log_gemini_call(
+                    purpose=f"Explain finding: {finding.get('issue', '')[:50]}",
+                    prompt=prompt_text,
+                    response=result.get("text", ""),
+                    error=result.get("error")
                 )
                 
                 # Check for quota exceeded
@@ -491,6 +517,12 @@ Keep it concise (3-4 sentences).
             except Exception as e:
                 logger.warning(f"[_enhance_findings_with_ai] Failed to generate AI explanation: {str(e)}")
                 finding["ai_explanation"] = "AI explanation unavailable."
+                log_gemini_call(
+                    purpose=f"Explain finding: {finding.get('issue', '')[:50]}",
+                    prompt=prompt_text,
+                    response="",
+                    error=str(e)
+                )
             
             enhanced.append(finding)
             # Stream the enhanced finding with AI explanation to frontend

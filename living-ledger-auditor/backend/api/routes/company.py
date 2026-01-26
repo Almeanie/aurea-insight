@@ -298,7 +298,7 @@ async def load_example_company(scenario_id: Optional[str] = None):
 
 
 async def load_scenario(scenario_id: str) -> CompanyMetadata:
-    """Load a specific scenario by ID."""
+    """Load a specific scenario by ID from pre-written files."""
     import json
     import csv
     from pathlib import Path
@@ -316,21 +316,25 @@ async def load_scenario(scenario_id: str) -> CompanyMetadata:
     if not scenario:
         raise HTTPException(status_code=404, detail=f"Scenario '{scenario_id}' not found")
     
+    def resolve_path(file_ref: str) -> Path:
+        """Resolve file path relative to scenarios dir."""
+        if file_ref.startswith("../"):
+            return scenarios_dir.parent / file_ref[3:]
+        return scenarios_dir / file_ref
+    
     # Load GL file
     gl_file = scenario.get("gl_file", "")
-    if gl_file.startswith("../"):
-        gl_path = scenarios_dir.parent / gl_file[3:]
-    else:
-        gl_path = scenarios_dir / gl_file
+    gl_path = resolve_path(gl_file)
+    
+    from core.schemas import JournalEntry, GeneralLedger, ChartOfAccounts, Account, TrialBalance, TrialBalanceRow
     
     gl_entries = []
     with open(gl_path, 'r', newline='', encoding='utf-8') as f:
         reader = csv.DictReader(f)
         for row in reader:
-            from core.schemas import JournalEntry
             gl_entries.append(JournalEntry(
                 entry_id=row['entry_id'],
-                date=row['date'],  # Keep as string YYYY-MM-DD
+                date=row['date'],
                 account_code=row['account_code'],
                 account_name=row['account_name'],
                 description=row['description'],
@@ -338,6 +342,61 @@ async def load_scenario(scenario_id: str) -> CompanyMetadata:
                 credit=float(row['credit']) if row['credit'] else 0.0,
                 vendor_or_customer=row.get('vendor_or_customer')
             ))
+    logger.info(f"[load_scenario] Loaded GL with {len(gl_entries)} entries")
+    
+    # Load COA file
+    coa_file = scenario.get("coa_file", "")
+    coa = None
+    if coa_file:
+        coa_path = resolve_path(coa_file)
+        if coa_path.exists():
+            accounts = []
+            with open(coa_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    accounts.append(Account(
+                        code=row['code'],
+                        name=row['name'],
+                        type=row['type'],
+                        normal_balance=row.get('normal_balance', 'debit'),
+                        subtype=row.get('subtype'),
+                        description=row.get('description', '')
+                    ))
+            coa = ChartOfAccounts(company_id="", accounts=accounts)
+            logger.info(f"[load_scenario] Loaded COA with {len(accounts)} accounts")
+    
+    # Load TB file
+    tb_file = scenario.get("tb_file", "")
+    tb = None
+    if tb_file:
+        tb_path = resolve_path(tb_file)
+        if tb_path.exists():
+            tb_rows = []
+            total_debit = 0.0
+            total_credit = 0.0
+            with open(tb_path, 'r', newline='', encoding='utf-8') as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    debit = float(row['debit']) if row['debit'] else 0.0
+                    credit = float(row['credit']) if row['credit'] else 0.0
+                    total_debit += debit
+                    total_credit += credit
+                    tb_rows.append(TrialBalanceRow(
+                        account_code=row['account_code'],
+                        account_name=row['account_name'],
+                        debit=debit,
+                        credit=credit
+                    ))
+            period_end_date = max(e.date for e in gl_entries) if gl_entries else str(datetime.now().date())
+            tb = TrialBalance(
+                company_id="",
+                period_end=period_end_date,
+                rows=tb_rows,
+                total_debits=round(total_debit, 2),
+                total_credits=round(total_credit, 2),
+                is_balanced=abs(total_debit - total_credit) < 0.01
+            )
+            logger.info(f"[load_scenario] Loaded TB with {len(tb_rows)} rows, balanced={tb.is_balanced}")
     
     # Create company
     company_id = f"scenario-{scenario_id}-{uuid.uuid4().hex[:6]}"
@@ -345,7 +404,7 @@ async def load_scenario(scenario_id: str) -> CompanyMetadata:
     industry_map = {
         "saas": Industry.SAAS,
         "retail": Industry.RETAIL,
-        "services": Industry.CONSULTING,  # Map services to consulting
+        "services": Industry.CONSULTING,
         "consulting": Industry.CONSULTING,
         "manufacturing": Industry.MANUFACTURING,
         "ecommerce": Industry.ECOMMERCE,
@@ -361,7 +420,6 @@ async def load_scenario(scenario_id: str) -> CompanyMetadata:
         is_synthetic=True
     )
     
-    from core.schemas import GeneralLedger
     gl = GeneralLedger(
         company_id=company_id,
         period_start=min(e.date for e in gl_entries) if gl_entries else datetime.now().date(),
@@ -369,15 +427,21 @@ async def load_scenario(scenario_id: str) -> CompanyMetadata:
         entries=gl_entries
     )
     
+    # Update company_id in COA and TB
+    if coa:
+        coa.company_id = company_id
+    if tb:
+        tb.company_id = company_id
+    
     companies[company_id] = {
         "metadata": metadata,
         "gl": gl,
-        "coa": None,
-        "tb": None,
+        "coa": coa,
+        "tb": tb,
         "scenario": scenario
     }
     
-    logger.info(f"[load_scenario] Loaded scenario '{scenario['name']}' with {len(gl_entries)} entries")
+    logger.info(f"[load_scenario] Loaded scenario '{scenario['name']}' with GL={len(gl_entries)}, COA={len(coa.accounts) if coa else 0}, TB={len(tb.rows) if tb else 0}")
     return metadata
 
 
