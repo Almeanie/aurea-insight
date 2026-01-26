@@ -10,6 +10,22 @@ from loguru import logger
 from core.schemas import GeneralLedger, Severity, FindingCategory
 
 
+# US Federal Holidays (approximate - some dates vary by year)
+US_HOLIDAYS = [
+    (1, 1),   # New Year's Day
+    (7, 4),   # Independence Day
+    (12, 25), # Christmas Day
+    (12, 24), # Christmas Eve (often observed)
+    (11, 11), # Veterans Day
+    (1, 15),  # MLK Day (approximate - 3rd Monday)
+    (2, 15),  # Presidents Day (approximate - 3rd Monday)
+    (5, 25),  # Memorial Day (approximate - last Monday)
+    (9, 1),   # Labor Day (approximate - 1st Monday)
+    (10, 10), # Columbus Day (approximate - 2nd Monday)
+    (11, 25), # Thanksgiving (approximate - 4th Thursday)
+]
+
+
 class FraudDetector:
     """Detects potential fraud patterns."""
     
@@ -39,6 +55,21 @@ class FraudDetector:
         vendor_findings = self._detect_vendor_anomalies(gl)
         findings.extend(vendor_findings)
         logger.info(f"[detect_fraud_patterns] Vendor anomalies: {len(vendor_findings)} findings")
+        
+        logger.info("[detect_fraud_patterns] Checking for round-tripping patterns")
+        round_trip_findings = self._detect_round_tripping(gl)
+        findings.extend(round_trip_findings)
+        logger.info(f"[detect_fraud_patterns] Round-tripping: {len(round_trip_findings)} findings")
+        
+        logger.info("[detect_fraud_patterns] Checking for weekend/holiday transactions")
+        weekend_findings = self._detect_weekend_holiday_transactions(gl)
+        findings.extend(weekend_findings)
+        logger.info(f"[detect_fraud_patterns] Weekend/holiday: {len(weekend_findings)} findings")
+        
+        logger.info("[detect_fraud_patterns] Checking for shared addresses")
+        address_findings = self._detect_shared_addresses(gl)
+        findings.extend(address_findings)
+        logger.info(f"[detect_fraud_patterns] Shared addresses: {len(address_findings)} findings")
         
         logger.info(f"[detect_fraud_patterns] Total fraud findings: {len(findings)}")
         return findings
@@ -176,3 +207,251 @@ class FraudDetector:
                 })
         
         return findings
+    
+    def _detect_round_tripping(self, gl: GeneralLedger) -> list[dict]:
+        """
+        Detect round-tripping: circular money flows where funds return to origin.
+        Pattern: Company pays A -> A pays B -> B pays back to Company
+        This is detected by finding:
+        1. Payments out to vendors
+        2. Receipts from customers within a time window
+        3. Similar amounts suggesting money cycling
+        """
+        findings = []
+        
+        # Build payment/receipt maps
+        payments = []  # (date, vendor, amount, entry_id)
+        receipts = []  # (date, customer, amount, entry_id)
+        
+        for entry in gl.entries:
+            try:
+                entry_date = datetime.strptime(entry.date, "%Y-%m-%d")
+            except (ValueError, TypeError):
+                continue
+                
+            if entry.debit > 0 and entry.vendor_or_customer:
+                payments.append((entry_date, entry.vendor_or_customer, entry.debit, entry.entry_id))
+            elif entry.credit > 0 and entry.vendor_or_customer:
+                receipts.append((entry_date, entry.vendor_or_customer, entry.credit, entry.entry_id))
+        
+        # Look for round-trip patterns: similar amounts within 30 days
+        tolerance = 0.05  # 5% tolerance for similar amounts
+        time_window = timedelta(days=30)
+        
+        suspicious_patterns = []
+        
+        for pay_date, vendor, pay_amount, pay_id in payments:
+            if pay_amount < 5000:  # Skip small amounts
+                continue
+                
+            for rec_date, customer, rec_amount, rec_id in receipts:
+                if rec_amount < 5000:
+                    continue
+                    
+                # Check time window (receipt should be after payment)
+                if rec_date < pay_date or (rec_date - pay_date) > time_window:
+                    continue
+                
+                # Check amount similarity
+                amount_diff = abs(pay_amount - rec_amount) / pay_amount
+                if amount_diff <= tolerance:
+                    # Check if different entities (not self-payment)
+                    if vendor.lower() != customer.lower():
+                        suspicious_patterns.append({
+                            "payment": (pay_date, vendor, pay_amount, pay_id),
+                            "receipt": (rec_date, customer, rec_amount, rec_id),
+                            "amount_match": 1 - amount_diff
+                        })
+        
+        # Group suspicious patterns
+        if len(suspicious_patterns) >= 2:
+            total_amount = sum(p["payment"][2] for p in suspicious_patterns)
+            findings.append({
+                "finding_id": f"RTR-{uuid.uuid4().hex[:8]}",
+                "category": FindingCategory.FRAUD.value,
+                "severity": Severity.CRITICAL.value,
+                "issue": "Potential Round-Tripping Pattern",
+                "details": f"Found {len(suspicious_patterns)} instances where payments to vendors were matched by similar receipts from customers within 30 days. Total amount: ${total_amount:,.2f}. This pattern may indicate circular money flows.",
+                "affected_transactions": [p["payment"][3] for p in suspicious_patterns] + [p["receipt"][3] for p in suspicious_patterns],
+                "patterns": [
+                    {
+                        "paid_to": p["payment"][1],
+                        "amount_paid": p["payment"][2],
+                        "received_from": p["receipt"][1],
+                        "amount_received": p["receipt"][2],
+                        "days_between": (p["receipt"][0] - p["payment"][0]).days
+                    }
+                    for p in suspicious_patterns[:5]  # Limit to first 5 for readability
+                ],
+                "recommendation": "Investigate business purpose of these transactions. Verify vendor/customer relationships. Check for common ownership.",
+                "confidence": 0.70,
+                "gaap_principle": "Anti-Money Laundering / Fraud Detection",
+                "detection_method": "Pattern analysis: Detecting circular money flows (payment -> receipt pattern with similar amounts within 30 days)"
+            })
+        
+        return findings
+    
+    def _detect_weekend_holiday_transactions(self, gl: GeneralLedger) -> list[dict]:
+        """
+        Detect transactions posted on weekends or holidays.
+        These may indicate backdating or unauthorized access.
+        """
+        findings = []
+        weekend_entries = []
+        holiday_entries = []
+        
+        for entry in gl.entries:
+            try:
+                entry_date = datetime.strptime(entry.date, "%Y-%m-%d")
+            except (ValueError, TypeError):
+                continue
+            
+            # Check for weekend (5 = Saturday, 6 = Sunday)
+            if entry_date.weekday() >= 5:
+                weekend_entries.append({
+                    "entry_id": entry.entry_id,
+                    "date": entry.date,
+                    "day": "Saturday" if entry_date.weekday() == 5 else "Sunday",
+                    "amount": entry.debit if entry.debit > 0 else entry.credit,
+                    "description": entry.description[:50] if entry.description else ""
+                })
+            
+            # Check for holiday
+            if (entry_date.month, entry_date.day) in US_HOLIDAYS:
+                holiday_entries.append({
+                    "entry_id": entry.entry_id,
+                    "date": entry.date,
+                    "amount": entry.debit if entry.debit > 0 else entry.credit,
+                    "description": entry.description[:50] if entry.description else ""
+                })
+        
+        # Flag if significant weekend activity
+        if len(weekend_entries) >= 3:
+            total_amount = sum(e["amount"] for e in weekend_entries)
+            findings.append({
+                "finding_id": f"WKD-{uuid.uuid4().hex[:8]}",
+                "category": FindingCategory.FRAUD.value,
+                "severity": Severity.LOW.value,
+                "issue": "Weekend Transaction Activity",
+                "details": f"{len(weekend_entries)} transactions posted on weekends totaling ${total_amount:,.2f}. Weekend entries may indicate backdating or system access outside normal business hours.",
+                "affected_transactions": [e["entry_id"] for e in weekend_entries],
+                "weekend_details": weekend_entries[:10],  # Limit to first 10
+                "recommendation": "Verify these entries were legitimately posted and properly authorized. Check system access logs.",
+                "confidence": 0.50,
+                "gaap_principle": "Internal Controls - Access Management",
+                "detection_method": "Temporal analysis: Detecting transactions posted on Saturday/Sunday"
+            })
+        
+        # Flag holiday entries
+        if len(holiday_entries) >= 2:
+            total_amount = sum(e["amount"] for e in holiday_entries)
+            findings.append({
+                "finding_id": f"HOL-{uuid.uuid4().hex[:8]}",
+                "category": FindingCategory.FRAUD.value,
+                "severity": Severity.LOW.value,
+                "issue": "Holiday Transaction Activity",
+                "details": f"{len(holiday_entries)} transactions posted on US holidays totaling ${total_amount:,.2f}. Holiday entries are unusual and may indicate backdating.",
+                "affected_transactions": [e["entry_id"] for e in holiday_entries],
+                "holiday_details": holiday_entries[:10],
+                "recommendation": "Verify authorization and business purpose for transactions posted on holidays.",
+                "confidence": 0.45,
+                "gaap_principle": "Internal Controls - Temporal Validation",
+                "detection_method": "Temporal analysis: Detecting transactions posted on US federal holidays"
+            })
+        
+        return findings
+    
+    def _detect_shared_addresses(self, gl: GeneralLedger) -> list[dict]:
+        """
+        Detect vendors/customers that may share addresses.
+        This indicates potential related party relationships.
+        
+        Note: This is a heuristic based on vendor name patterns when 
+        actual address data is not available.
+        """
+        findings = []
+        
+        # Collect unique vendors and customers
+        vendors = set()
+        customers = set()
+        
+        for entry in gl.entries:
+            if entry.vendor_or_customer:
+                entity = entry.vendor_or_customer.strip()
+                if entry.debit > 0:
+                    vendors.add(entity)
+                elif entry.credit > 0:
+                    customers.add(entity)
+        
+        # Check for entities appearing as both vendor and customer (self-dealing indicator)
+        both_roles = vendors.intersection(customers)
+        if both_roles:
+            findings.append({
+                "finding_id": f"SLF-{uuid.uuid4().hex[:8]}",
+                "category": FindingCategory.FRAUD.value,
+                "severity": Severity.HIGH.value,
+                "issue": "Entity as Both Vendor and Customer",
+                "details": f"{len(both_roles)} entities appear as both vendor and customer: {', '.join(list(both_roles)[:5])}{'...' if len(both_roles) > 5 else ''}. This pattern may indicate related party transactions or self-dealing.",
+                "entities": list(both_roles),
+                "recommendation": "Verify business purpose for each transaction. Document any related party relationships. Ensure arm's length transactions.",
+                "confidence": 0.75,
+                "gaap_principle": "Related Party Disclosure (ASC 850)",
+                "detection_method": "Entity analysis: Detecting entities in dual vendor/customer roles"
+            })
+        
+        # Check for similar names (potential shell company networks)
+        all_entities = list(vendors.union(customers))
+        similar_groups = self._find_similar_entity_names(all_entities)
+        
+        for group in similar_groups:
+            if len(group) >= 2:
+                findings.append({
+                    "finding_id": f"SIM-{uuid.uuid4().hex[:8]}",
+                    "category": FindingCategory.FRAUD.value,
+                    "severity": Severity.MEDIUM.value,
+                    "issue": "Potentially Related Entities (Similar Names)",
+                    "details": f"Found {len(group)} entities with similar names: {', '.join(group)}. This may indicate related parties or shell company network.",
+                    "entities": group,
+                    "recommendation": "Verify if these entities share ownership, addresses, or management. Document any related party relationships.",
+                    "confidence": 0.60,
+                    "gaap_principle": "Related Party Disclosure (ASC 850)",
+                    "detection_method": "Text analysis: Detecting similar entity names that may indicate related parties"
+                })
+        
+        return findings
+    
+    def _find_similar_entity_names(self, entities: list[str]) -> list[list[str]]:
+        """Find groups of entities with similar names."""
+        if len(entities) < 2:
+            return []
+        
+        groups = []
+        processed = set()
+        
+        for i, entity1 in enumerate(entities):
+            if entity1 in processed:
+                continue
+            
+            group = [entity1]
+            e1_words = set(entity1.lower().split())
+            
+            for j, entity2 in enumerate(entities):
+                if i == j or entity2 in processed:
+                    continue
+                
+                e2_words = set(entity2.lower().split())
+                
+                # Check word overlap (at least 2 significant words in common)
+                common_words = e1_words.intersection(e2_words)
+                # Remove common generic words
+                common_words = common_words - {"the", "and", "of", "inc", "llc", "corp", "ltd", "co"}
+                
+                if len(common_words) >= 2:
+                    group.append(entity2)
+                    processed.add(entity2)
+            
+            if len(group) >= 2:
+                processed.add(entity1)
+                groups.append(group)
+        
+        return groups

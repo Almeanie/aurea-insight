@@ -32,7 +32,8 @@ import {
   Loader2,
   Search,
   Eye,
-  Code
+  Code,
+  Lock
 } from "lucide-react";
 import Link from "next/link";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
@@ -78,6 +79,7 @@ export default function CompanyPage({ params }: PageProps) {
   const [ownershipStatus, setOwnershipStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
   
   const [ownershipGraphId, setOwnershipGraphId] = useState<string | null>(null);
+  const [isOwnershipFullscreen, setIsOwnershipFullscreen] = useState(false);
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<{role: string; content: string}[]>([]);
@@ -142,6 +144,10 @@ export default function CompanyPage({ params }: PageProps) {
   const [streamingFindings, setStreamingFindings] = useState<any[]>([]);
   const [streamingAjes, setStreamingAjes] = useState<any[]>([]);
   const [streamingRiskScore, setStreamingRiskScore] = useState<any>(null);
+  
+  // State for streaming reasoning chain and gemini interactions
+  const [streamingReasoningChain, setStreamingReasoningChain] = useState<any[]>([]);
+  const [streamingGeminiInteractions, setStreamingGeminiInteractions] = useState<any[]>([]);
 
   // Stop audit function
   const stopAudit = async () => {
@@ -208,6 +214,8 @@ export default function CompanyPage({ params }: PageProps) {
     setStreamingFindings([]);
     setStreamingAjes([]);
     setStreamingRiskScore(null);
+    setStreamingReasoningChain([]);
+    setStreamingGeminiInteractions([]);
     
     addReasoningStep("Initializing audit engine...", "info");
 
@@ -291,6 +299,12 @@ export default function CompanyPage({ params }: PageProps) {
               } else if (dataType === 'risk_score') {
                 // Update risk score
                 setStreamingRiskScore(payload);
+              } else if (dataType === 'reasoning_step') {
+                // Add reasoning step to streaming chain
+                setStreamingReasoningChain(prev => [...prev, payload]);
+              } else if (dataType === 'gemini_interaction') {
+                // Add gemini interaction to streaming list
+                setStreamingGeminiInteractions(prev => [...prev, payload]);
               }
             } else if (data.type === 'gemini_call' && data.data) {
               // Handle Gemini API call logging
@@ -763,8 +777,20 @@ export default function CompanyPage({ params }: PageProps) {
     );
   }
   const trail = auditTrail?.audit_trail;
-  const reasoningChain = trail?.reasoning_chain || [];
-  const geminiInteractions = trail?.gemini_interactions || [];
+  // Use streaming data during audit, fall back to trail data after completion
+  const reasoningChain = useMemo(() => {
+    if (streamingReasoningChain.length > 0) {
+      return streamingReasoningChain;
+    }
+    return trail?.reasoning_chain || [];
+  }, [streamingReasoningChain, trail?.reasoning_chain]);
+  
+  const geminiInteractions = useMemo(() => {
+    if (streamingGeminiInteractions.length > 0) {
+      return streamingGeminiInteractions;
+    }
+    return trail?.gemini_interactions || [];
+  }, [streamingGeminiInteractions, trail?.gemini_interactions]);
 
   return (
     <main className="min-h-screen bg-[#0a0a0a]">
@@ -959,11 +985,21 @@ export default function CompanyPage({ params }: PageProps) {
                             </TableRow>
                           </TableHeader>
                           <TableBody>
-                            {findings.map((finding: any, idx: number) => (
+                            {findings.map((finding: any, idx: number) => {
+                              // Finding is ready when it has AI explanation or audit is complete
+                              const isProcessing = isAuditing && (!finding.ai_explanation || finding.ai_explanation.includes("skipped"));
+                              const isClickable = !isProcessing;
+                              
+                              return (
                               <TableRow 
                                 key={finding.finding_id || idx} 
-                                className="border-[#1f1f1f] cursor-pointer hover:bg-[#1a1a1a] transition-colors"
+                                className={`border-[#1f1f1f] transition-colors ${
+                                  isClickable 
+                                    ? 'cursor-pointer hover:bg-[#1a1a1a]' 
+                                    : 'cursor-not-allowed opacity-70'
+                                }`}
                                 onClick={() => {
+                                  if (!isClickable) return;
                                   setSelectedFinding(finding);
                                   setFindingDialogOpen(true);
                                 }}
@@ -992,34 +1028,55 @@ export default function CompanyPage({ params }: PageProps) {
                                 <TableCell className="financial-number">
                                   <div>{Math.round((finding.confidence || 0) * 100)}%</div>
                                   {finding.ai_explanation && !finding.ai_explanation.includes("skipped") ? (
-                                    <div className="flex items-center gap-1 mt-1">
+                                    <div className="flex items-center gap-1 mt-1" title="AI explanation available">
                                       <Brain className="h-3 w-3 text-[#a855f7]" />
-                                      <span className="text-[10px] text-[#a855f7]">AI</span>
+                                      <span className="text-[10px] text-[#a855f7]">AI Ready</span>
                                     </div>
                                   ) : isAuditing ? (
-                                    <div className="flex items-center gap-1 mt-1">
+                                    <div className="flex items-center gap-1 mt-1" title="Generating AI explanation...">
                                       <Loader2 className="h-3 w-3 text-[#00d4ff] animate-spin" />
-                                      <span className="text-[10px] text-[#00d4ff]">...</span>
+                                      <span className="text-[10px] text-[#00d4ff]">Loading</span>
                                     </div>
-                                  ) : null}
+                                  ) : (
+                                    <div className="flex items-center gap-1 mt-1" title="AI explanation not available">
+                                      <Lock className="h-3 w-3 text-muted-foreground" />
+                                      <span className="text-[10px] text-muted-foreground">Pending</span>
+                                    </div>
+                                  )}
                                 </TableCell>
                                 <TableCell>
                                   <Button 
                                     variant="ghost" 
                                     size="sm"
-                                    className="text-[#00d4ff] hover:text-[#00d4ff] hover:bg-[#00d4ff]/10"
+                                    className={`${
+                                      isClickable 
+                                        ? 'text-[#00d4ff] hover:text-[#00d4ff] hover:bg-[#00d4ff]/10' 
+                                        : 'text-muted-foreground cursor-not-allowed'
+                                    }`}
+                                    disabled={!isClickable}
                                     onClick={(e) => {
                                       e.stopPropagation();
+                                      if (!isClickable) return;
                                       setSelectedFinding(finding);
                                       setFindingDialogOpen(true);
                                     }}
                                   >
-                                    <Eye className="h-4 w-4 mr-1" />
-                                    View
+                                    {isProcessing ? (
+                                      <>
+                                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                        Processing
+                                      </>
+                                    ) : (
+                                      <>
+                                        <Eye className="h-4 w-4 mr-1" />
+                                        View
+                                      </>
+                                    )}
                                   </Button>
                                 </TableCell>
                               </TableRow>
-                            ))}
+                            );
+                            })}
                           </TableBody>
                         </Table>
                       </ScrollArea>
@@ -1119,6 +1176,7 @@ export default function CompanyPage({ params }: PageProps) {
                             }))}
                             width={600}
                             height={400}
+                            onExpandClick={() => setIsOwnershipFullscreen(true)}
                           />
                         </div>
                         {ownershipFindings.length > 0 && (
@@ -1173,7 +1231,7 @@ export default function CompanyPage({ params }: PageProps) {
                       <CardDescription>
                         {reasoningChain.length > 0 
                           ? `${reasoningChain.length} documented steps`
-                          : "Run an audit first"}
+                          : isAuditing ? "Building reasoning chain..." : "Run an audit to see reasoning"}
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
@@ -1203,8 +1261,15 @@ export default function CompanyPage({ params }: PageProps) {
                           </div>
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">
-                            <Brain className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">No reasoning chain available</p>
+                            <Clock className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                            <p className="text-sm font-medium">No reasoning chain available</p>
+                            {isAuditing ? (
+                              <p className="text-xs mt-2 text-[#00d4ff]">Audit in progress - reasoning steps will appear here...</p>
+                            ) : auditResults ? (
+                              <p className="text-xs mt-2">Audit trail data may have been cleared. Run a new audit to see the reasoning chain.</p>
+                            ) : (
+                              <p className="text-xs mt-2">Run an audit to see the AI reasoning chain.</p>
+                            )}
                           </div>
                         )}
                       </ScrollArea>
@@ -1264,8 +1329,15 @@ export default function CompanyPage({ params }: PageProps) {
                           </div>
                         ) : (
                           <div className="text-center py-8 text-muted-foreground">
-                            <MessageSquare className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">No AI interactions recorded</p>
+                            <Brain className="h-8 w-8 mx-auto mb-2 opacity-50" />
+                            <p className="text-sm font-medium">No AI interactions recorded</p>
+                            {isAuditing ? (
+                              <p className="text-xs mt-2 text-[#00d4ff]">Audit in progress - Gemini calls will appear here...</p>
+                            ) : auditResults ? (
+                              <p className="text-xs mt-2">Audit trail data may have been cleared. Run a new audit to see Gemini interactions.</p>
+                            ) : (
+                              <p className="text-xs mt-2">Run an audit to see how Gemini AI assists the audit process.</p>
+                            )}
                           </div>
                         )}
                       </ScrollArea>
@@ -1564,6 +1636,7 @@ export default function CompanyPage({ params }: PageProps) {
         finding={selectedFinding}
         open={findingDialogOpen}
         onOpenChange={setFindingDialogOpen}
+        isAuditing={isAuditing}
       />
       
       <GeminiInteractionDialog
@@ -1594,6 +1667,48 @@ export default function CompanyPage({ params }: PageProps) {
         }}
         operationType={ownershipStatus === "quota_exceeded" ? "ownership" : "audit"}
       />
+
+      {/* Fullscreen Ownership Graph Modal */}
+      {isOwnershipFullscreen && (
+        <div className="fixed inset-0 z-50 bg-[#0a0a0a]">
+          <div className="w-full h-full">
+            <OwnershipGraph 
+              nodes={ownershipGraph?.nodes || streamingNodes.map(n => ({
+                id: n.id,
+                name: n.name,
+                type: n.type || "company",
+                risk_level: n.red_flags?.length > 0 ? "high" : "low",
+                jurisdiction: n.jurisdiction,
+                red_flags: n.red_flags || [],
+                api_source: n.api_source,
+                registration_number: n.registration_number,
+                status: n.status,
+                is_boilerplate: n.is_boilerplate,
+                is_root: n.is_root,
+                registered_address: n.registered_address,
+                registration_date: n.registration_date,
+                beneficial_owners: n.beneficial_owners,
+                directors: n.directors,
+                lei: n.lei,
+                ticker: n.ticker,
+                gemini_classification: n.gemini_classification,
+                data_quality_score: n.data_quality_score,
+                is_mock: n.is_mock
+              }))}
+              edges={ownershipGraph?.edges || streamingEdges.map(e => ({
+                source: e.source,
+                target: e.target,
+                relationship: e.relationship,
+                ownership_percentage: e.percentage
+              }))}
+              width={typeof window !== 'undefined' ? window.innerWidth : 1200}
+              height={typeof window !== 'undefined' ? window.innerHeight : 800}
+              isFullscreen={true}
+              onCloseFullscreen={() => setIsOwnershipFullscreen(false)}
+            />
+          </div>
+        </div>
+      )}
     </main>
   );
 }

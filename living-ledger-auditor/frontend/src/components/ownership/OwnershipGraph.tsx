@@ -45,6 +45,9 @@ interface OwnershipGraphProps {
   edges: OwnershipEdge[];
   width?: number;
   height?: number;
+  isFullscreen?: boolean;
+  onExpandClick?: () => void;
+  onCloseFullscreen?: () => void;
 }
 
 // Color mapping for relationship types
@@ -121,12 +124,143 @@ function pointToSegmentDistance(
   return Math.sqrt((px - nearestX) ** 2 + (py - nearestY) ** 2);
 }
 
+// Check if two line segments intersect
+function linesIntersect(
+  x1: number, y1: number, x2: number, y2: number,
+  x3: number, y3: number, x4: number, y4: number
+): boolean {
+  // Calculate direction vectors
+  const d1x = x2 - x1, d1y = y2 - y1;
+  const d2x = x4 - x3, d2y = y4 - y3;
+  
+  // Calculate cross product
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 0.001) return false; // Parallel lines
+  
+  const t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / cross;
+  const u = ((x3 - x1) * d1y - (y3 - y1) * d1x) / cross;
+  
+  // Check if intersection is within both segments (excluding endpoints)
+  return t > 0.05 && t < 0.95 && u > 0.05 && u < 0.95;
+}
+
+// Get intersection point of two line segments
+function getIntersectionPoint(
+  x1: number, y1: number, x2: number, y2: number,
+  x3: number, y3: number, x4: number, y4: number
+): { x: number; y: number } | null {
+  const d1x = x2 - x1, d1y = y2 - y1;
+  const d2x = x4 - x3, d2y = y4 - y3;
+  
+  const cross = d1x * d2y - d1y * d2x;
+  if (Math.abs(cross) < 0.001) return null;
+  
+  const t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / cross;
+  
+  return { x: x1 + t * d1x, y: y1 + t * d1y };
+}
+
+// Force to reduce edge crossings
+function forceUncrossEdges(links: any[]) {
+  let nodes: any[] = [];
+  
+  function force(alpha: number) {
+    // Find all edge crossings and push nodes to reduce them
+    for (let i = 0; i < links.length; i++) {
+      const link1 = links[i];
+      const s1 = link1.source;
+      const t1 = link1.target;
+      if (!s1?.x || !t1?.x) continue;
+      
+      for (let j = i + 1; j < links.length; j++) {
+        const link2 = links[j];
+        const s2 = link2.source;
+        const t2 = link2.target;
+        if (!s2?.x || !t2?.x) continue;
+        
+        // Skip if links share a node
+        if (s1.id === s2.id || s1.id === t2.id || t1.id === s2.id || t1.id === t2.id) continue;
+        
+        // Check if edges intersect
+        if (linesIntersect(s1.x, s1.y, t1.x, t1.y, s2.x, s2.y, t2.x, t2.y)) {
+          // Push nodes apart to uncross
+          const intersection = getIntersectionPoint(s1.x, s1.y, t1.x, t1.y, s2.x, s2.y, t2.x, t2.y);
+          if (!intersection) continue;
+          
+          const strength = alpha * 30;
+          
+          // Move nodes that are not fixed
+          for (const node of [s1, t1, s2, t2]) {
+            if (node.fx !== null && node.fy !== null) continue;
+            
+            // Calculate perpendicular push from intersection
+            const dx = node.x - intersection.x;
+            const dy = node.y - intersection.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            
+            if (dist > 0 && dist < 150) {
+              // Push away from intersection
+              const pushStrength = strength * (1 - dist / 150);
+              node.vx += (dx / dist) * pushStrength;
+              node.vy += (dy / dist) * pushStrength;
+            }
+          }
+        }
+      }
+    }
+  }
+  
+  force.initialize = function(_nodes: any[]) {
+    nodes = _nodes;
+  };
+  
+  return force;
+}
+
+// Storage key for node positions
+function getStorageKey(nodeIds: string[]): string {
+  return `graph_positions_${nodeIds.sort().join('_').slice(0, 100)}`;
+}
+
+// Save node positions to localStorage
+function saveNodePositions(nodes: any[], storageKey: string) {
+  const positions: Record<string, { x: number; y: number; fx: number | null; fy: number | null }> = {};
+  for (const node of nodes) {
+    if (node.x !== undefined && node.y !== undefined) {
+      positions[node.id] = { 
+        x: node.x, 
+        y: node.y, 
+        fx: node.fx, 
+        fy: node.fy 
+      };
+    }
+  }
+  try {
+    localStorage.setItem(storageKey, JSON.stringify(positions));
+  } catch (e) {
+    // Ignore storage errors
+  }
+}
+
+// Load node positions from localStorage
+function loadNodePositions(storageKey: string): Record<string, { x: number; y: number; fx: number | null; fy: number | null }> | null {
+  try {
+    const saved = localStorage.getItem(storageKey);
+    if (saved) {
+      return JSON.parse(saved);
+    }
+  } catch (e) {
+    // Ignore storage errors
+  }
+  return null;
+}
+
 // Custom force to push nodes away from edges
 function forceAvoidEdges(links: any[], nodeRadius: number) {
   let nodes: any[] = [];
   
   function force(alpha: number) {
-    const minDist = nodeRadius + 25;
+    const minDist = nodeRadius + 40;
     
     for (const node of nodes) {
       if (node.fx !== null && node.fy !== null) continue;
@@ -212,7 +346,10 @@ export default function OwnershipGraph({
   nodes, 
   edges, 
   width = 600, 
-  height = 400 
+  height = 400,
+  isFullscreen = false,
+  onExpandClick,
+  onCloseFullscreen
 }: OwnershipGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
@@ -301,8 +438,23 @@ export default function OwnershipGraph({
         });
       svg.call(zoom);
 
-      // Create simulation nodes
+      // Calculate storage key and try to load saved positions
+      const storageKey = getStorageKey(nodes.map(n => n.id));
+      const savedPositions = loadNodePositions(storageKey);
+      
+      // Create simulation nodes with saved positions if available
       simNodesRef.current = nodes.map((n, i) => {
+        const saved = savedPositions?.[n.id];
+        if (saved) {
+          return {
+            ...n,
+            x: saved.x,
+            y: saved.y,
+            fx: saved.fx ?? (n.is_root ? centerX : null),
+            fy: saved.fy ?? (n.is_root ? centerY : null),
+          };
+        }
+        
         const angle = (i / nodes.length) * 2 * Math.PI - Math.PI / 2;
         const radius = n.is_root ? 0 : 80 + (i % 3) * 40;
         return {
@@ -329,16 +481,17 @@ export default function OwnershipGraph({
       // Create new simulation
       const linkForce = d3.forceLink(simEdgesRef.current as any)
         .id((d: any) => d.id)
-        .distance(80)
-        .strength(0.7);
+        .distance(120)
+        .strength(0.5);
 
       const simulation = d3.forceSimulation(simNodesRef.current as any)
         .force("link", linkForce)
-        .force("charge", d3.forceManyBody().strength(-200).distanceMax(300))
-        .force("collision", d3.forceCollide().radius(nodeRadius + 20).strength(1))
+        .force("charge", d3.forceManyBody().strength(-400).distanceMax(400))
+        .force("collision", d3.forceCollide().radius(nodeRadius + 35).strength(1))
         .force("avoidEdges", forceAvoidEdges(simEdgesRef.current, nodeRadius))
-        .force("compact", forceCompact(centerX, centerY, 0.02))
-        .velocityDecay(0.4);
+        .force("uncrossEdges", forceUncrossEdges(simEdgesRef.current))
+        .force("compact", forceCompact(centerX, centerY, 0.015))
+        .velocityDecay(0.3);
 
       simulationRef.current = simulation;
 
@@ -353,34 +506,49 @@ export default function OwnershipGraph({
       feMerge.append("feMergeNode").attr("in", "coloredBlur");
       feMerge.append("feMergeNode").attr("in", "SourceGraphic");
 
-      // Draw edges
+      // Draw edges - wider hitbox for hover
       const edgeGroup = g.append("g").attr("class", "edges");
-      const links = edgeGroup.selectAll("line")
+      
+      // Invisible wider lines for easier hover detection
+      const linkHitboxes = edgeGroup.selectAll(".edge-hitbox")
         .data(simEdgesRef.current)
         .enter()
         .append("line")
+        .attr("class", "edge-hitbox")
+        .attr("stroke", "transparent")
+        .attr("stroke-width", 15)
+        .attr("cursor", "pointer");
+      
+      // Visible edge lines
+      const links = edgeGroup.selectAll(".edge-line")
+        .data(simEdgesRef.current)
+        .enter()
+        .append("line")
+        .attr("class", "edge-line")
         .attr("stroke", d => getEdgeColor(d as any))
         .attr("stroke-width", 2)
-        .attr("stroke-opacity", 0.7);
+        .attr("stroke-opacity", 0.7)
+        .attr("pointer-events", "none");
 
-      // Edge labels
+      // Edge labels - hidden by default, shown on hover
       const labelGroup = g.append("g").attr("class", "edge-labels");
       const edgeLabels = labelGroup.selectAll("g")
         .data(simEdgesRef.current)
         .enter()
-        .append("g");
+        .append("g")
+        .attr("opacity", 0)
+        .attr("pointer-events", "none");
 
       edgeLabels.append("rect")
         .attr("fill", d => getEdgeColor(d as any))
-        .attr("rx", 3).attr("ry", 3)
-        .attr("opacity", 0.9);
+        .attr("rx", 3).attr("ry", 3);
 
       edgeLabels.append("text")
         .attr("text-anchor", "middle")
         .attr("dominant-baseline", "middle")
         .attr("fill", "#ffffff")
-        .attr("font-size", "8px")
-        .attr("font-weight", "500")
+        .attr("font-size", "9px")
+        .attr("font-weight", "600")
         .text(d => formatLabel(d as any));
 
       edgeLabels.each(function() {
@@ -389,12 +557,51 @@ export default function OwnershipGraph({
         const bbox = (text.node() as SVGTextElement)?.getBBox();
         if (bbox) {
           grp.select("rect")
-            .attr("x", -bbox.width / 2 - 4)
-            .attr("y", -bbox.height / 2 - 2)
-            .attr("width", bbox.width + 8)
-            .attr("height", bbox.height + 4);
+            .attr("x", -bbox.width / 2 - 5)
+            .attr("y", -bbox.height / 2 - 3)
+            .attr("width", bbox.width + 10)
+            .attr("height", bbox.height + 6);
         }
       });
+
+      // Add hover effects to show/hide labels
+      linkHitboxes
+        .on("mouseenter", function(event, d: any) {
+          // Find the matching label and show it
+          edgeLabels.filter((ld: any) => {
+            const ls = typeof ld.source === 'object' ? ld.source.id : ld.source;
+            const lt = typeof ld.target === 'object' ? ld.target.id : ld.target;
+            const ds = typeof d.source === 'object' ? d.source.id : d.source;
+            const dt = typeof d.target === 'object' ? d.target.id : d.target;
+            return ls === ds && lt === dt;
+          })
+            .transition()
+            .duration(150)
+            .attr("opacity", 1);
+          
+          // Highlight the edge
+          links.filter((ld: any) => {
+            const ls = typeof ld.source === 'object' ? ld.source.id : ld.source;
+            const lt = typeof ld.target === 'object' ? ld.target.id : ld.target;
+            const ds = typeof d.source === 'object' ? d.source.id : d.source;
+            const dt = typeof d.target === 'object' ? d.target.id : d.target;
+            return ls === ds && lt === dt;
+          })
+            .attr("stroke-width", 3)
+            .attr("stroke-opacity", 1);
+        })
+        .on("mouseleave", function(event, d: any) {
+          // Hide all labels
+          edgeLabels
+            .transition()
+            .duration(300)
+            .attr("opacity", 0);
+          
+          // Reset edge style
+          links
+            .attr("stroke-width", 2)
+            .attr("stroke-opacity", 0.7);
+        });
 
       // Draw nodes
       const nodeGroup = g.append("g").attr("class", "nodes");
@@ -417,6 +624,8 @@ export default function OwnershipGraph({
             if (!event.active) simulation.alphaTarget(0);
             d.fx = d.x;
             d.fy = d.y;
+            // Save node positions to localStorage after drag
+            saveNodePositions(simNodesRef.current, storageKey);
           }))
         .on("click", (event, d) => {
           event.stopPropagation();
@@ -459,7 +668,15 @@ export default function OwnershipGraph({
 
       // Tick function
       simulation.on("tick", () => {
+        // Update visible lines
         links
+          .attr("x1", (d: any) => d.source.x)
+          .attr("y1", (d: any) => d.source.y)
+          .attr("x2", (d: any) => d.target.x)
+          .attr("y2", (d: any) => d.target.y);
+
+        // Update hitbox lines
+        linkHitboxes
           .attr("x1", (d: any) => d.source.x)
           .attr("y1", (d: any) => d.source.y)
           .attr("x2", (d: any) => d.target.x)
@@ -502,6 +719,9 @@ export default function OwnershipGraph({
       // Incremental update - add new nodes without resetting existing positions
       const simulation = simulationRef.current;
       if (!simulation || !gRef.current) return;
+      
+      // Calculate storage key for incremental updates
+      const incrementalStorageKey = getStorageKey(nodes.map(n => n.id));
 
       // Add new nodes to simulation
       nodesToAdd.forEach((n, i) => {
@@ -564,40 +784,56 @@ export default function OwnershipGraph({
       simulation.nodes(simNodesRef.current);
       (simulation.force("link") as d3.ForceLink<any, any>).links(simEdgesRef.current);
       simulation.force("avoidEdges", forceAvoidEdges(simEdgesRef.current, nodeRadius));
+      simulation.force("uncrossEdges", forceUncrossEdges(simEdgesRef.current));
 
       // Rebuild visual elements
       const g = gRef.current;
 
-      // Update edges
+      // Update edges - clear all and rebuild with hitboxes
       const edgeGroup = g.select(".edges");
-      edgeGroup.selectAll("line").remove();
-      edgeGroup.selectAll("line")
+      edgeGroup.selectAll("*").remove();
+      
+      // Invisible wider lines for easier hover detection
+      const linkHitboxes = edgeGroup.selectAll(".edge-hitbox")
         .data(simEdgesRef.current)
         .enter()
         .append("line")
+        .attr("class", "edge-hitbox")
+        .attr("stroke", "transparent")
+        .attr("stroke-width", 15)
+        .attr("cursor", "pointer");
+      
+      // Visible edge lines
+      const links = edgeGroup.selectAll(".edge-line")
+        .data(simEdgesRef.current)
+        .enter()
+        .append("line")
+        .attr("class", "edge-line")
         .attr("stroke", d => getEdgeColor(d as any))
         .attr("stroke-width", 2)
-        .attr("stroke-opacity", 0.7);
+        .attr("stroke-opacity", 0.7)
+        .attr("pointer-events", "none");
 
-      // Update edge labels
+      // Update edge labels - hidden by default
       const labelGroup = g.select(".edge-labels");
       labelGroup.selectAll("g").remove();
       const edgeLabels = labelGroup.selectAll("g")
         .data(simEdgesRef.current)
         .enter()
-        .append("g");
+        .append("g")
+        .attr("opacity", 0)
+        .attr("pointer-events", "none");
 
       edgeLabels.append("rect")
         .attr("fill", d => getEdgeColor(d as any))
-        .attr("rx", 3).attr("ry", 3)
-        .attr("opacity", 0.9);
+        .attr("rx", 3).attr("ry", 3);
 
       edgeLabels.append("text")
         .attr("text-anchor", "middle")
         .attr("dominant-baseline", "middle")
         .attr("fill", "#ffffff")
-        .attr("font-size", "8px")
-        .attr("font-weight", "500")
+        .attr("font-size", "9px")
+        .attr("font-weight", "600")
         .text(d => formatLabel(d as any));
 
       edgeLabels.each(function() {
@@ -606,12 +842,47 @@ export default function OwnershipGraph({
         const bbox = (text.node() as SVGTextElement)?.getBBox();
         if (bbox) {
           grp.select("rect")
-            .attr("x", -bbox.width / 2 - 4)
-            .attr("y", -bbox.height / 2 - 2)
-            .attr("width", bbox.width + 8)
-            .attr("height", bbox.height + 4);
+            .attr("x", -bbox.width / 2 - 5)
+            .attr("y", -bbox.height / 2 - 3)
+            .attr("width", bbox.width + 10)
+            .attr("height", bbox.height + 6);
         }
       });
+
+      // Add hover effects to show/hide labels
+      linkHitboxes
+        .on("mouseenter", function(event, d: any) {
+          edgeLabels.filter((ld: any) => {
+            const ls = typeof ld.source === 'object' ? ld.source.id : ld.source;
+            const lt = typeof ld.target === 'object' ? ld.target.id : ld.target;
+            const ds = typeof d.source === 'object' ? d.source.id : d.source;
+            const dt = typeof d.target === 'object' ? d.target.id : d.target;
+            return ls === ds && lt === dt;
+          })
+            .transition()
+            .duration(150)
+            .attr("opacity", 1);
+          
+          links.filter((ld: any) => {
+            const ls = typeof ld.source === 'object' ? ld.source.id : ld.source;
+            const lt = typeof ld.target === 'object' ? ld.target.id : ld.target;
+            const ds = typeof d.source === 'object' ? d.source.id : d.source;
+            const dt = typeof d.target === 'object' ? d.target.id : d.target;
+            return ls === ds && lt === dt;
+          })
+            .attr("stroke-width", 3)
+            .attr("stroke-opacity", 1);
+        })
+        .on("mouseleave", function() {
+          edgeLabels
+            .transition()
+            .duration(300)
+            .attr("opacity", 0);
+          
+          links
+            .attr("stroke-width", 2)
+            .attr("stroke-opacity", 0.7);
+        });
 
       // Update nodes
       const nodeGroup = g.select(".nodes");
@@ -635,6 +906,8 @@ export default function OwnershipGraph({
             if (!event.active) simulation.alphaTarget(0);
             d.fx = d.x;
             d.fy = d.y;
+            // Save node positions to localStorage after drag
+            saveNodePositions(simNodesRef.current, incrementalStorageKey);
           }))
         .on("click", (event, d) => {
           event.stopPropagation();
@@ -702,16 +975,42 @@ export default function OwnershipGraph({
   }, [structureKey, width, height]); // Only run when structure changes
 
   return (
-    <div className="relative">
+    <div className={`relative ${isFullscreen ? 'w-full h-full' : ''}`}>
+      {/* Expand/Close button */}
+      {!isFullscreen && onExpandClick && (
+        <button
+          onClick={onExpandClick}
+          className="absolute top-2 right-2 z-10 bg-[#111111]/90 backdrop-blur p-2 rounded border border-[#1f1f1f] hover:border-[#00d4ff] hover:bg-[#1a1a1a] transition-colors"
+          title="Expand to fullscreen"
+        >
+          <svg className="w-4 h-4 text-[#00d4ff]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+          </svg>
+        </button>
+      )}
+      
+      {isFullscreen && onCloseFullscreen && (
+        <button
+          onClick={onCloseFullscreen}
+          className="absolute top-4 right-4 z-10 bg-[#111111]/90 backdrop-blur px-4 py-2 rounded border border-[#1f1f1f] hover:border-[#ff3366] hover:bg-[#1a1a1a] transition-colors flex items-center gap-2"
+          title="Close fullscreen"
+        >
+          <svg className="w-4 h-4 text-[#ff3366]" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+          </svg>
+          <span className="text-sm text-[#fafafa]">Close</span>
+        </button>
+      )}
+      
       <svg
         ref={svgRef}
         width={width}
         height={height}
-        className="bg-[#0a0a0a] rounded-lg border border-[#1f1f1f]"
+        className={`bg-[#0a0a0a] ${isFullscreen ? 'rounded-none' : 'rounded-lg border border-[#1f1f1f]'}`}
       />
       
       {/* Compact Legend */}
-      <div className="absolute bottom-2 left-2 bg-[#111111]/90 backdrop-blur p-2 rounded border border-[#1f1f1f] text-[10px]">
+      <div className={`absolute ${isFullscreen ? 'bottom-4 left-4' : 'bottom-2 left-2'} bg-[#111111]/90 backdrop-blur p-2 rounded border border-[#1f1f1f] text-[10px]`}>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
           <div className="flex items-center gap-1">
             <div className="w-2 h-2 rounded-full bg-[#10b981]" />
@@ -748,7 +1047,7 @@ export default function OwnershipGraph({
 
       {/* Selected Node Info - Detailed Panel */}
       {selectedNode && (
-        <div className="absolute top-2 right-2 bg-[#111111]/95 backdrop-blur p-3 rounded border border-[#1f1f1f] w-72 max-h-[350px] overflow-y-auto text-sm">
+        <div className={`absolute ${isFullscreen ? 'top-4 right-20' : 'top-10 right-2'} bg-[#111111]/95 backdrop-blur p-3 rounded border border-[#1f1f1f] w-72 ${isFullscreen ? 'max-h-[80vh]' : 'max-h-[350px]'} overflow-y-auto text-sm z-20`}>
           {/* Header */}
           <div className="flex items-start justify-between mb-2">
             <h4 className="font-semibold break-words text-[#fafafa] flex-1 pr-2">{selectedNode.name}</h4>

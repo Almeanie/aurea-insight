@@ -18,7 +18,9 @@ import {
   DollarSign,
   Calendar,
   Building,
-  Hash
+  Hash,
+  Loader2,
+  Lock
 } from "lucide-react";
 
 interface TransactionDetail {
@@ -53,14 +55,20 @@ interface FindingDetailDialogProps {
   finding: Finding | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  isAuditing?: boolean;
 }
 
 export default function FindingDetailDialog({ 
   finding, 
   open, 
-  onOpenChange 
+  onOpenChange,
+  isAuditing = false
 }: FindingDetailDialogProps) {
   if (!finding) return null;
+
+  // Check if AI explanation is available
+  const hasAiExplanation = finding.ai_explanation && !finding.ai_explanation.includes("skipped") && finding.ai_explanation.trim().length > 0;
+  const isAiTabDisabled = !hasAiExplanation && !isAuditing;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -100,9 +108,19 @@ export default function FindingDetailDialog({
               <Code className="mr-2 h-4 w-4" />
               Audit Rule
             </TabsTrigger>
-            <TabsTrigger value="ai" className="data-[state=active]:bg-[#1a1a1a]">
-              <Brain className="mr-2 h-4 w-4" />
-              AI Reasoning
+            <TabsTrigger 
+              value="ai" 
+              className={`data-[state=active]:bg-[#1a1a1a] ${!hasAiExplanation ? 'opacity-60' : ''}`}
+              disabled={isAiTabDisabled}
+            >
+              {isAuditing && !hasAiExplanation ? (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin text-[#00d4ff]" />
+              ) : !hasAiExplanation ? (
+                <Lock className="mr-2 h-4 w-4 text-muted-foreground" />
+              ) : (
+                <Brain className="mr-2 h-4 w-4 text-[#a855f7]" />
+              )}
+              {isAuditing && !hasAiExplanation ? "Loading..." : hasAiExplanation ? "AI Reasoning" : "AI Pending"}
             </TabsTrigger>
           </TabsList>
 
@@ -267,14 +285,30 @@ export default function FindingDetailDialog({
                     <Brain className="h-4 w-4 text-[#a855f7]" />
                     AI Explanation
                   </h4>
-                  {finding.ai_explanation ? (
+                  {hasAiExplanation ? (
                     <div className="prose prose-invert prose-sm max-w-none">
                       <p className="text-muted-foreground whitespace-pre-wrap">{finding.ai_explanation}</p>
                     </div>
+                  ) : isAuditing ? (
+                    <div className="flex items-center gap-3 text-[#00d4ff]">
+                      <Loader2 className="h-5 w-5 animate-spin" />
+                      <div>
+                        <p className="font-medium">Generating AI explanation...</p>
+                        <p className="text-xs text-muted-foreground mt-1">
+                          Gemini is analyzing this finding and will provide context shortly.
+                        </p>
+                      </div>
+                    </div>
                   ) : (
-                    <p className="text-muted-foreground italic">
-                      AI explanation not available (quota exceeded or not requested)
-                    </p>
+                    <div className="text-muted-foreground">
+                      <p className="italic mb-2">AI explanation not available</p>
+                      <p className="text-xs">This may be due to:</p>
+                      <ul className="text-xs list-disc list-inside mt-1 space-y-1">
+                        <li>API quota exceeded</li>
+                        <li>Explanation was skipped for this finding type</li>
+                        <li>Network error during generation</li>
+                      </ul>
+                    </div>
                   )}
                 </div>
 

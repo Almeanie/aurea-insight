@@ -82,6 +82,21 @@ class AuditEngine:
                 except Exception:
                     pass
         
+        def stream_reasoning_step(step: str, details: dict = None):
+            """Stream reasoning step to frontend in real-time."""
+            entry = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "step": step,
+                "details": details or {}
+            }
+            stream_reasoning_step(step, details)
+            stream_data("reasoning_step", entry)
+        
+        def stream_gemini_interaction(interaction: dict):
+            """Stream Gemini interaction to frontend in real-time."""
+            audit_record.add_gemini_interaction(interaction)
+            stream_data("gemini_interaction", interaction)
+        
         def log_gemini_call(purpose: str, prompt: str, response: str, error: str = None):
             """Log Gemini API call details to frontend."""
             if gemini_callback:
@@ -151,7 +166,7 @@ class AuditEngine:
         if start_phase <= 1:
             logger.info("[run_full_audit] Step 1: Validating data structure")
             report_progress("Step 1/8: Validating data structure...", 10.0)
-            audit_record.add_reasoning_step("Starting structural validation", {
+            stream_reasoning_step("Starting structural validation", {
                 "description": "Checking data integrity and basic accounting principles",
                 "data_input": {
                     "gl_entries_count": len(gl.entries) if gl else 0,
@@ -166,7 +181,7 @@ class AuditEngine:
             })
             structural_findings = self._validate_structure(gl, tb, coa)
             all_findings.extend(structural_findings)
-            audit_record.add_reasoning_step(f"Found {len(structural_findings)} structural issues", {
+            stream_reasoning_step(f"Found {len(structural_findings)} structural issues", {
                 "findings_count": len(structural_findings),
                 "findings_summary": [f.get("issue") for f in structural_findings]
             })
@@ -202,7 +217,7 @@ class AuditEngine:
                     "description": entry.description[:50] if entry.description else ""
                 })
         
-        audit_record.add_reasoning_step("Running GAAP compliance checks", {
+        stream_reasoning_step("Running GAAP compliance checks", {
             "description": "Applying Generally Accepted Accounting Principles validation",
             "accounting_basis": metadata.accounting_basis.value if hasattr(metadata.accounting_basis, 'value') else str(metadata.accounting_basis),
             "rules_applied": [
@@ -222,7 +237,7 @@ class AuditEngine:
             basis=metadata.accounting_basis
         )
         all_findings.extend(gaap_findings)
-        audit_record.add_reasoning_step(f"Found {len(gaap_findings)} GAAP compliance issues", {
+        stream_reasoning_step(f"Found {len(gaap_findings)} GAAP compliance issues", {
             "findings_count": len(gaap_findings),
             "by_category": self._count_by_field(gaap_findings, "category"),
             "by_severity": self._count_by_field(gaap_findings, "severity"),
@@ -243,7 +258,7 @@ class AuditEngine:
         # Step 3: Anomaly detection
         logger.info("[run_full_audit] Step 3: Running statistical anomaly detection")
         report_progress("Step 3/7: Running anomaly detection (Benford's Law, Z-score)...", 35.0)
-        audit_record.add_reasoning_step("Running statistical anomaly detection", {
+        stream_reasoning_step("Running statistical anomaly detection", {
             "description": "Applying statistical algorithms to identify unusual patterns",
             "algorithms_applied": [
                 "Benford's Law Analysis (first digit distribution)",
@@ -255,7 +270,7 @@ class AuditEngine:
         })
         anomaly_findings = self.anomaly_detector.detect_anomalies(gl)
         all_findings.extend(anomaly_findings)
-        audit_record.add_reasoning_step(f"Found {len(anomaly_findings)} statistical anomalies", {
+        stream_reasoning_step(f"Found {len(anomaly_findings)} statistical anomalies", {
             "findings_count": len(anomaly_findings),
             "findings_summary": [{"id": f.get("finding_id"), "issue": f.get("issue")} for f in anomaly_findings]
         })
@@ -269,7 +284,7 @@ class AuditEngine:
         # Step 4: Fraud detection
         logger.info("[run_full_audit] Step 4: Running fraud pattern detection")
         report_progress("Step 4/7: Scanning for fraud patterns...", 45.0)
-        audit_record.add_reasoning_step("Running fraud pattern detection", {
+        stream_reasoning_step("Running fraud pattern detection", {
             "description": "Scanning for known fraud patterns and suspicious activity",
             "patterns_checked": [
                 "Duplicate Payments (same vendor, amount, date)",
@@ -282,7 +297,7 @@ class AuditEngine:
         })
         fraud_findings = self.fraud_detector.detect_fraud_patterns(gl)
         all_findings.extend(fraud_findings)
-        audit_record.add_reasoning_step(f"Found {len(fraud_findings)} potential fraud indicators", {
+        stream_reasoning_step(f"Found {len(fraud_findings)} potential fraud indicators", {
             "findings_count": len(fraud_findings),
             "findings_summary": [{"id": f.get("finding_id"), "issue": f.get("issue"), "severity": f.get("severity")} for f in fraud_findings]
         })
@@ -296,14 +311,14 @@ class AuditEngine:
         # Step 5: Enhance findings with AI reasoning
         logger.info("[run_full_audit] Step 5: Generating AI explanations for findings")
         report_progress(f"Step 5/7: Generating AI explanations for {len(all_findings)} findings...", 55.0)
-        audit_record.add_reasoning_step("Generating AI explanations for findings", {
+        stream_reasoning_step("Generating AI explanations for findings", {
             "description": "Using Gemini AI to generate human-readable explanations for each finding",
             "model": "gemini-3-flash-preview",
             "findings_to_process": len(all_findings),
             "ai_purpose": "Generate clear, professional explanations including business risk and recommendations"
         })
         enhanced_findings = await self._enhance_findings_with_ai(
-            all_findings, audit_record, report_progress, stream_data, log_gemini_call
+            all_findings, audit_record, report_progress, stream_data, log_gemini_call, stream_gemini_interaction
         )
         logger.info(f"[run_full_audit] Enhanced {len(enhanced_findings)} findings with AI")
         report_progress(f"Enhanced {len(enhanced_findings)} findings with AI explanations", 75.0)
@@ -316,7 +331,7 @@ class AuditEngine:
         logger.info("[run_full_audit] Step 6: Generating adjusting journal entries")
         report_progress("Step 6/7: Generating adjusting journal entries...", 80.0)
         correctable_findings = [f for f in enhanced_findings if f.get("category") in ["classification", "cutoff", "valuation", "balance"]]
-        audit_record.add_reasoning_step("Generating adjusting journal entries", {
+        stream_reasoning_step("Generating adjusting journal entries", {
             "description": "Creating journal entries to correct identified issues",
             "correctable_findings": len(correctable_findings),
             "method": "Deterministic rules with AI assistance for complex cases",
@@ -335,7 +350,7 @@ class AuditEngine:
             # Stream each AJE to frontend as it's added
             stream_data("aje", aje)
         
-        audit_record.add_reasoning_step(f"Generated {len(ajes)} adjusting journal entries", {
+        stream_reasoning_step(f"Generated {len(ajes)} adjusting journal entries", {
             "aje_count": len(ajes),
             "ajes_summary": [{"id": a.get("aje_id"), "description": a.get("description", "")[:50]} for a in ajes]
         })
@@ -343,7 +358,7 @@ class AuditEngine:
         # Step 7: Calculate risk score
         logger.info("[run_full_audit] Step 7: Calculating risk score")
         report_progress("Step 7/7: Calculating risk score...", 90.0)
-        audit_record.add_reasoning_step("Calculating risk score", {
+        stream_reasoning_step("Calculating risk score", {
             "description": "Computing overall audit risk based on findings",
             "methodology": "Weighted severity scoring with confidence adjustment",
             "weights": {
@@ -425,7 +440,8 @@ class AuditEngine:
         audit_record: AuditRecord,
         progress_callback: callable = None,
         data_callback: callable = None,
-        gemini_callback: callable = None
+        gemini_callback: callable = None,
+        gemini_interaction_callback: callable = None
     ) -> list[dict]:
         """Use Gemini to enhance findings with explanations."""
         logger.info(f"[_enhance_findings_with_ai] Enhancing {len(findings)} findings with AI explanations")
@@ -503,10 +519,14 @@ Keep it concise (3-4 sentences)."""
                     logger.error("Remaining findings will not have AI explanations")
                     logger.error("=" * 60)
                     quota_exceeded = True
-                    audit_record.add_reasoning_step("AI explanations stopped - Gemini API quota exceeded")
+                    stream_reasoning_step("AI explanations stopped - Gemini API quota exceeded")
                     finding["ai_explanation"] = "AI explanation skipped - API quota exceeded"
                 elif result.get("audit"):
-                    audit_record.add_gemini_interaction(result["audit"])
+                    # Stream the gemini interaction to frontend in real-time
+                    if gemini_interaction_callback:
+                        gemini_interaction_callback(result["audit"])
+                    else:
+                        audit_record.add_gemini_interaction(result["audit"])
                     
                     if result.get("text"):
                         finding["ai_explanation"] = result["text"]
