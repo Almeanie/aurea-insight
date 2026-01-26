@@ -53,7 +53,8 @@ class ProgressTracker:
         data: Optional[dict] = None,
         progress_percent: Optional[float] = None,
         current_step: Optional[int] = None,
-        step_name: Optional[str] = None
+        step_name: Optional[str] = None,
+        total_steps: Optional[int] = None
     ):
         """Add a progress step and notify subscribers."""
         if operation_id not in self._progress:
@@ -65,6 +66,8 @@ class ProgressTracker:
                 self._step_info[operation_id]["current_step"] = current_step
             if step_name is not None:
                 self._step_info[operation_id]["step_name"] = step_name
+            if total_steps is not None:
+                self._step_info[operation_id]["total_steps"] = total_steps
         
         # Build step data with step info
         step_info = self._step_info.get(operation_id, {})

@@ -89,19 +89,67 @@ class SECEdgarAPI:
                 
             query_lower = query.lower().strip()
             
+            # Remove common suffixes for better matching
+            suffixes_to_remove = ["inc.", "inc", "corp.", "corp", "llc", "ltd.", "ltd", "company", "co.", "co"]
+            query_base = query_lower
+            for suffix in suffixes_to_remove:
+                if query_base.endswith(suffix):
+                    query_base = query_base[:-len(suffix)].strip()
+            
+            # Extract significant words from query (filter out common terms)
+            common_words = {"the", "and", "of", "a", "an", "in", "for", "to", "on", "at", "by"}
+            query_words = [w for w in query_lower.split() if w not in common_words and len(w) > 2]
+            
             # Filter matching companies - check both name and ticker
             matches = []
             for key, company in data.items():
                 title = company.get("title", "").lower()
                 ticker = company.get("ticker", "").lower()
                 
-                # Match if query is in company name or matches ticker exactly
-                if query_lower in title or query_lower == ticker:
+                # Match strategies (in order of quality):
+                # 1. Exact query in title
+                if query_lower in title:
                     matches.append({
                         "cik": str(company.get("cik_str", "")).zfill(10),
                         "ticker": company.get("ticker", ""),
-                        "name": company.get("title", "")
+                        "name": company.get("title", ""),
+                        "match_quality": 1.0
                     })
+                    continue
+                
+                # 2. Exact ticker match
+                if query_lower == ticker:
+                    matches.append({
+                        "cik": str(company.get("cik_str", "")).zfill(10),
+                        "ticker": company.get("ticker", ""),
+                        "name": company.get("title", ""),
+                        "match_quality": 1.0
+                    })
+                    continue
+                
+                # 3. Base query (without suffixes) in title
+                if query_base and len(query_base) > 3 and query_base in title:
+                    matches.append({
+                        "cik": str(company.get("cik_str", "")).zfill(10),
+                        "ticker": company.get("ticker", ""),
+                        "name": company.get("title", ""),
+                        "match_quality": 0.9
+                    })
+                    continue
+                
+                # 4. First significant word matches (e.g., "Marriott" from "Marriott Hotels")
+                if query_words and len(query_words[0]) > 4:
+                    if query_words[0] in title:
+                        matches.append({
+                            "cik": str(company.get("cik_str", "")).zfill(10),
+                            "ticker": company.get("ticker", ""),
+                            "name": company.get("title", ""),
+                            "match_quality": 0.7
+                        })
+                        continue
+            
+            # Sort by match quality and limit
+            matches.sort(key=lambda x: x.get("match_quality", 0), reverse=True)
             
             if matches:
                 logger.info(f"[SEC EDGAR] Found {len(matches)} matches for: {query}")
@@ -208,3 +256,122 @@ class SECEdgarAPI:
         except Exception as e:
             logger.warning(f"[SEC EDGAR] Company submissions exception: {e}")
             return None
+    
+    async def get_beneficial_ownership_filings(self, cik: str) -> list[dict]:
+        """
+        Get beneficial ownership data from SEC filings.
+        
+        Fetches data from:
+        - DEF 14A (Proxy statements with ownership info)
+        - SC 13D/G (Beneficial ownership reports)
+        - 10-K (Annual reports with ownership section)
+        
+        Args:
+            cik: Central Index Key
+            
+        Returns:
+            List of ownership filings with extracted data
+        """
+        try:
+            cik_padded = cik.zfill(10)
+            filings = []
+            
+            async with httpx.AsyncClient() as client:
+                # Get submission history to find ownership-related filings
+                response = await client.get(
+                    f"{self.DATA_URL}/submissions/CIK{cik_padded}.json",
+                    headers={
+                        "User-Agent": self.USER_AGENT,
+                        "Accept": "application/json"
+                    },
+                    timeout=15.0
+                )
+                
+                if response.status_code != 200:
+                    return []
+                
+                data = response.json()
+                recent = data.get("filings", {}).get("recent", {})
+                forms = recent.get("form", [])
+                accession_numbers = recent.get("accessionNumber", [])
+                filing_dates = recent.get("filingDate", [])
+                primary_documents = recent.get("primaryDocument", [])
+                
+                # Look for ownership-related filings (limit to recent ones)
+                ownership_forms = ["DEF 14A", "SC 13D", "SC 13G", "SC 13D/A", "SC 13G/A", "3", "4", "5"]
+                
+                for i, form in enumerate(forms[:50]):  # Check last 50 filings
+                    if form in ownership_forms:
+                        filings.append({
+                            "form_type": form,
+                            "filing_date": filing_dates[i] if i < len(filing_dates) else None,
+                            "accession_number": accession_numbers[i] if i < len(accession_numbers) else None,
+                            "document": primary_documents[i] if i < len(primary_documents) else None,
+                            "cik": cik_padded
+                        })
+                        
+                        if len(filings) >= 5:  # Limit to 5 most recent
+                            break
+                
+                if filings:
+                    logger.info(f"[SEC EDGAR] Found {len(filings)} ownership filings for CIK: {cik_padded}")
+                
+                return filings
+                    
+        except Exception as e:
+            logger.warning(f"[SEC EDGAR] Beneficial ownership filings exception: {e}")
+            return []
+    
+    async def get_insider_transactions(self, cik: str) -> list[dict]:
+        """
+        Get insider transaction data (Forms 3, 4, 5).
+        
+        These forms show who owns significant portions of the company.
+        
+        Args:
+            cik: Central Index Key
+            
+        Returns:
+            List of insider transactions
+        """
+        try:
+            cik_padded = cik.zfill(10)
+            
+            async with httpx.AsyncClient() as client:
+                # Use the SEC full-text search for insider filings
+                response = await client.get(
+                    f"{self.DATA_URL}/submissions/CIK{cik_padded}.json",
+                    headers={
+                        "User-Agent": self.USER_AGENT,
+                        "Accept": "application/json"
+                    },
+                    timeout=15.0
+                )
+                
+                if response.status_code != 200:
+                    return []
+                
+                data = response.json()
+                recent = data.get("filings", {}).get("recent", {})
+                forms = recent.get("form", [])
+                filing_dates = recent.get("filingDate", [])
+                
+                # Count insider forms
+                insider_forms = ["3", "4", "5"]
+                transactions = []
+                
+                for i, form in enumerate(forms[:100]):
+                    if form in insider_forms:
+                        transactions.append({
+                            "form_type": form,
+                            "filing_date": filing_dates[i] if i < len(filing_dates) else None,
+                        })
+                
+                if transactions:
+                    logger.info(f"[SEC EDGAR] Found {len(transactions)} insider transactions for CIK: {cik_padded}")
+                
+                return transactions
+                    
+        except Exception as e:
+            logger.warning(f"[SEC EDGAR] Insider transactions exception: {e}")
+            return []

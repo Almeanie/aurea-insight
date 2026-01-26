@@ -67,10 +67,12 @@ class AuditEngine:
         """
         logger.info("[run_full_audit] Starting full audit execution")
         
-        def report_progress(msg: str, pct: float):
+        TOTAL_STEPS = 7
+        
+        def report_progress(msg: str, pct: float, current_step: int = None):
             if progress_callback:
                 try:
-                    progress_callback(msg, pct)
+                    progress_callback(msg, pct, current_step, TOTAL_STEPS)
                 except Exception:
                     pass
         
@@ -89,7 +91,9 @@ class AuditEngine:
                 "step": step,
                 "details": details or {}
             }
-            stream_reasoning_step(step, details)
+            # Add to audit record for persistence
+            audit_record.add_reasoning_step(step, details)
+            # Stream to frontend in real-time
             stream_data("reasoning_step", entry)
         
         def stream_gemini_interaction(interaction: dict):
@@ -165,7 +169,7 @@ class AuditEngine:
         
         if start_phase <= 1:
             logger.info("[run_full_audit] Step 1: Validating data structure")
-            report_progress("Step 1/8: Validating data structure...", 10.0)
+            report_progress("Step 1/7: Validating data structure...", 10.0, current_step=1)
             stream_reasoning_step("Starting structural validation", {
                 "description": "Checking data integrity and basic accounting principles",
                 "data_input": {
@@ -202,7 +206,7 @@ class AuditEngine:
         
         # Step 2: GAAP compliance (always runs)
         logger.info("[run_full_audit] Step 2: Running GAAP compliance checks")
-        report_progress("Step 2/8: Running GAAP compliance checks...", 20.0)
+        report_progress("Step 2/7: Running GAAP compliance checks...", 20.0, current_step=2)
         
         # Capture sample transactions for audit trail
         sample_transactions = []
@@ -257,7 +261,7 @@ class AuditEngine:
         
         # Step 3: Anomaly detection
         logger.info("[run_full_audit] Step 3: Running statistical anomaly detection")
-        report_progress("Step 3/7: Running anomaly detection (Benford's Law, Z-score)...", 35.0)
+        report_progress("Step 3/7: Running anomaly detection (Benford's Law, Z-score)...", 35.0, current_step=3)
         stream_reasoning_step("Running statistical anomaly detection", {
             "description": "Applying statistical algorithms to identify unusual patterns",
             "algorithms_applied": [
@@ -283,7 +287,7 @@ class AuditEngine:
         
         # Step 4: Fraud detection
         logger.info("[run_full_audit] Step 4: Running fraud pattern detection")
-        report_progress("Step 4/7: Scanning for fraud patterns...", 45.0)
+        report_progress("Step 4/7: Scanning for fraud patterns...", 45.0, current_step=4)
         stream_reasoning_step("Running fraud pattern detection", {
             "description": "Scanning for known fraud patterns and suspicious activity",
             "patterns_checked": [
@@ -310,7 +314,7 @@ class AuditEngine:
         
         # Step 5: Enhance findings with AI reasoning
         logger.info("[run_full_audit] Step 5: Generating AI explanations for findings")
-        report_progress(f"Step 5/7: Generating AI explanations for {len(all_findings)} findings...", 55.0)
+        report_progress(f"Step 5/7: Generating AI explanations for {len(all_findings)} findings...", 55.0, current_step=5)
         stream_reasoning_step("Generating AI explanations for findings", {
             "description": "Using Gemini AI to generate human-readable explanations for each finding",
             "model": "gemini-3-flash-preview",
@@ -329,7 +333,7 @@ class AuditEngine:
         
         # Step 6: Generate AJEs
         logger.info("[run_full_audit] Step 6: Generating adjusting journal entries")
-        report_progress("Step 6/7: Generating adjusting journal entries...", 80.0)
+        report_progress("Step 6/7: Generating adjusting journal entries...", 80.0, current_step=6)
         correctable_findings = [f for f in enhanced_findings if f.get("category") in ["classification", "cutoff", "valuation", "balance"]]
         stream_reasoning_step("Generating adjusting journal entries", {
             "description": "Creating journal entries to correct identified issues",
@@ -357,7 +361,7 @@ class AuditEngine:
         
         # Step 7: Calculate risk score
         logger.info("[run_full_audit] Step 7: Calculating risk score")
-        report_progress("Step 7/7: Calculating risk score...", 90.0)
+        report_progress("Step 7/7: Calculating risk score...", 90.0, current_step=7)
         stream_reasoning_step("Calculating risk score", {
             "description": "Computing overall audit risk based on findings",
             "methodology": "Weighted severity scoring with confidence adjustment",

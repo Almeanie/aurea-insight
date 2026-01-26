@@ -1,0 +1,65 @@
+{
+  "company_id": "example_acme_software",
+  "name": "Acme Software Solutions Inc.",
+  "industry": "saas",
+  "accounting_basis": "accrual",
+  "reporting_period": "2024-Q4",
+  "known_issues": [
+    {
+      "id": "ISSUE-001",
+      "type": "misclassification",
+      "description": "Flight expense coded to Office Supplies instead of Travel & Entertainment",
+      "entry_id": "EX-009",
+      "severity": "medium"
+    },
+    {
+      "id": "ISSUE-002",
+      "type": "misclassification",
+      "description": "Hotel expense coded to Office Supplies instead of Travel & Entertainment",
+      "entry_id": "EX-017",
+      "severity": "medium"
+    },
+    {
+      "id": "ISSUE-003",
+      "type": "misclassification",
+      "description": "Uber rides coded to Office Supplies instead of Travel & Entertainment",
+      "entry_id": "EX-031",
+      "severity": "low"
+    },
+    {
+      "id": "ISSUE-004",
+      "type": "high_value",
+      "description": "Google Ads expense of $25,000 exceeds typical approval threshold",
+      "entry_id": "EX-007",
+      "severity": "high"
+    },
+    {
+      "id": "ISSUE-005",
+      "type": "high_value",
+      "description": "Equipment purchase of $15,000 exceeds typical approval threshold",
+      "entry_id": "EX-025",
+      "severity": "medium"
+    },
+    {
+      "id": "ISSUE-006",
+      "type": "prepaid_amortization",
+      "description": "Annual insurance premium of $6,000 recorded as prepaid but not amortized monthly",
+      "entry_id": "EX-013",
+      "severity": "medium"
+    },
+    {
+      "id": "ISSUE-007",
+      "type": "timing",
+      "description": "Large revenue of $45,000 recognized on December 31st (period end) - potential revenue recognition timing issue",
+      "entry_id": "EX-021",
+      "severity": "high"
+    },
+    {
+      "id": "ISSUE-008",
+      "type": "structural",
+      "description": "Negative cash balance of -$6,200 indicates potential overdraft or data error",
+      "account_code": "1000",
+      "severity": "critical"
+    }
+  ]
+}

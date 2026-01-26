@@ -9,7 +9,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
-import OwnershipGraph from "@/components/ownership/OwnershipGraph";
+import OwnershipGraph, { EntityNode } from "@/components/ownership/OwnershipGraph";
 import FindingDetailDialog from "@/components/audit/FindingDetailDialog";
 import GeminiInteractionDialog from "@/components/audit/GeminiInteractionDialog";
 import ReasoningStepDialog from "@/components/audit/ReasoningStepDialog";
@@ -80,6 +80,7 @@ export default function CompanyPage({ params }: PageProps) {
   
   const [ownershipGraphId, setOwnershipGraphId] = useState<string | null>(null);
   const [isOwnershipFullscreen, setIsOwnershipFullscreen] = useState(false);
+  const [selectedOwnershipNode, setSelectedOwnershipNode] = useState<EntityNode | null>(null);
 
   // Chat state
   const [chatMessages, setChatMessages] = useState<{role: string; content: string}[]>([]);
@@ -762,6 +763,22 @@ export default function CompanyPage({ params }: PageProps) {
     return Array.from(allAjesMap.values());
   }, [baseAjesList, streamingAjes]);
 
+  // Use streaming data during audit, fall back to trail data after completion
+  const trail = auditTrail?.audit_trail;
+  const reasoningChain = useMemo(() => {
+    if (streamingReasoningChain.length > 0) {
+      return streamingReasoningChain;
+    }
+    return trail?.reasoning_chain || [];
+  }, [streamingReasoningChain, trail?.reasoning_chain]);
+  
+  const geminiInteractions = useMemo(() => {
+    if (streamingGeminiInteractions.length > 0) {
+      return streamingGeminiInteractions;
+    }
+    return trail?.gemini_interactions || [];
+  }, [streamingGeminiInteractions, trail?.gemini_interactions]);
+
   // === EARLY RETURNS (after all hooks) ===
   if (isLoading) {
     return (
@@ -776,21 +793,6 @@ export default function CompanyPage({ params }: PageProps) {
       </div>
     );
   }
-  const trail = auditTrail?.audit_trail;
-  // Use streaming data during audit, fall back to trail data after completion
-  const reasoningChain = useMemo(() => {
-    if (streamingReasoningChain.length > 0) {
-      return streamingReasoningChain;
-    }
-    return trail?.reasoning_chain || [];
-  }, [streamingReasoningChain, trail?.reasoning_chain]);
-  
-  const geminiInteractions = useMemo(() => {
-    if (streamingGeminiInteractions.length > 0) {
-      return streamingGeminiInteractions;
-    }
-    return trail?.gemini_interactions || [];
-  }, [streamingGeminiInteractions, trail?.gemini_interactions]);
 
   return (
     <main className="min-h-screen bg-[#0a0a0a]">
@@ -1135,7 +1137,8 @@ export default function CompanyPage({ params }: PageProps) {
                   
                   <CardContent className="overflow-hidden">
                     {/* Use streaming data while discovering, final graph when complete */}
-                    {(ownershipGraph || (isDiscoveringOwnership && streamingNodes.length > 0)) ? (
+                    {/* Keep streaming data as fallback if API fetch fails */}
+                    {(ownershipGraph || streamingNodes.length > 0) ? (
                       <div className="overflow-x-auto">
                         {/* Show live indicator while discovering */}
                         {isDiscoveringOwnership && (
@@ -1177,6 +1180,9 @@ export default function CompanyPage({ params }: PageProps) {
                             width={600}
                             height={400}
                             onExpandClick={() => setIsOwnershipFullscreen(true)}
+                            onNodeSelect={setSelectedOwnershipNode}
+                            selectedNode={selectedOwnershipNode}
+                            showInlineCard={false}
                           />
                         </div>
                         {ownershipFindings.length > 0 && (
@@ -1579,6 +1585,170 @@ export default function CompanyPage({ params }: PageProps) {
                 </div>
               </CardContent>
             </Card>
+
+            {/* Selected Entity Card - Below Auditor Assistant */}
+            {selectedOwnershipNode && (
+              <Card className="bg-[#111111] border-[#1f1f1f] mt-4">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center justify-between text-base">
+                    <div className="flex items-center gap-2">
+                      <Network className="h-4 w-4 text-[#00d4ff]" />
+                      <span className="truncate">{selectedOwnershipNode.name}</span>
+                    </div>
+                    <button
+                      onClick={() => setSelectedOwnershipNode(null)}
+                      className="text-xs text-[#666] hover:text-[#00d4ff] px-2"
+                    >
+                      X
+                    </button>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="text-sm">
+                  {/* Data Source Badge */}
+                  <div className="flex items-center gap-2 mb-3 flex-wrap">
+                    <span className={`text-[10px] px-2 py-0.5 rounded ${
+                      selectedOwnershipNode.api_source === 'mock_demo' ? 'bg-[#666] text-white' :
+                      selectedOwnershipNode.api_source === 'opencorporates' ? 'bg-[#22c55e] text-white' :
+                      selectedOwnershipNode.api_source === 'sec_edgar' ? 'bg-[#3b82f6] text-white' :
+                      selectedOwnershipNode.api_source === 'uk_companies_house' ? 'bg-[#8b5cf6] text-white' :
+                      selectedOwnershipNode.api_source === 'gleif' ? 'bg-[#f97316] text-white' :
+                      'bg-[#444] text-white'
+                    }`}>
+                      {selectedOwnershipNode.api_source || 'Unknown Source'}
+                    </span>
+                    {selectedOwnershipNode.is_root && (
+                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#10b981] text-white">Audited Company</span>
+                    )}
+                  </div>
+
+                  {/* Entity Details */}
+                  <div className="space-y-2 text-xs">
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Type:</span>
+                      <span className="capitalize text-[#fafafa]">{selectedOwnershipNode.type}</span>
+                    </div>
+                    {selectedOwnershipNode.jurisdiction && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Jurisdiction:</span>
+                        <span className="text-[#fafafa]">{selectedOwnershipNode.jurisdiction}</span>
+                      </div>
+                    )}
+                    {selectedOwnershipNode.status && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Status:</span>
+                        <span className={`${selectedOwnershipNode.status === 'active' ? 'text-[#22c55e]' : 'text-[#ff6b35]'}`}>
+                          {selectedOwnershipNode.status}
+                        </span>
+                      </div>
+                    )}
+                    {selectedOwnershipNode.registration_number && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Reg. No:</span>
+                        <span className="text-[#fafafa] font-mono text-[10px]">{selectedOwnershipNode.registration_number}</span>
+                      </div>
+                    )}
+                    {selectedOwnershipNode.lei && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">LEI:</span>
+                        <span className="text-[#fafafa] font-mono text-[10px]">{selectedOwnershipNode.lei.slice(0, 12)}...</span>
+                      </div>
+                    )}
+                    {selectedOwnershipNode.ticker && (
+                      <div className="flex justify-between">
+                        <span className="text-muted-foreground">Ticker:</span>
+                        <span className="text-[#00d4ff] font-bold">{selectedOwnershipNode.ticker}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Gemini Classification */}
+                  {selectedOwnershipNode.gemini_classification && (
+                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
+                      <div className="text-[10px] text-muted-foreground mb-1">AI Classification:</div>
+                      <div className="text-xs text-[#a855f7] capitalize">{selectedOwnershipNode.gemini_classification.replace(/_/g, ' ')}</div>
+                      {selectedOwnershipNode.data_quality_score !== undefined && (
+                        <div className="flex items-center gap-2 mt-1">
+                          <span className="text-[10px] text-muted-foreground">Data Quality:</span>
+                          <div className="flex-1 bg-[#1f1f1f] rounded-full h-1.5">
+                            <div 
+                              className="bg-[#00d4ff] h-1.5 rounded-full" 
+                              style={{ width: `${selectedOwnershipNode.data_quality_score * 100}%` }}
+                            />
+                          </div>
+                          <span className="text-[10px] text-[#fafafa]">{Math.round(selectedOwnershipNode.data_quality_score * 100)}%</span>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Red Flags */}
+                  {selectedOwnershipNode.red_flags && selectedOwnershipNode.red_flags.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
+                      <div className="text-[10px] text-[#ff3366] font-medium mb-1">
+                        Red Flags ({selectedOwnershipNode.red_flags.length}):
+                      </div>
+                      <div className="space-y-1 max-h-24 overflow-y-auto">
+                        {selectedOwnershipNode.red_flags.map((flag, i) => (
+                          <div key={i} className="text-[10px] text-muted-foreground bg-[#1a0a0a] p-1.5 rounded border border-[#ff3366]/20">
+                            {flag}
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Address */}
+                  {selectedOwnershipNode.registered_address && (
+                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
+                      <div className="text-[10px] text-muted-foreground mb-1">Registered Address:</div>
+                      <div className="text-[10px] text-[#fafafa]">{selectedOwnershipNode.registered_address}</div>
+                    </div>
+                  )}
+
+                  {/* Directors */}
+                  {selectedOwnershipNode.directors && selectedOwnershipNode.directors.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
+                      <div className="text-[10px] text-muted-foreground mb-1">
+                        Directors ({selectedOwnershipNode.directors.length}):
+                      </div>
+                      <div className="space-y-1">
+                        {selectedOwnershipNode.directors.slice(0, 3).map((dir: any, i: number) => (
+                          <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
+                            <span>{dir.name}</span>
+                            {dir.role && <span className="text-muted-foreground">{dir.role}</span>}
+                          </div>
+                        ))}
+                        {selectedOwnershipNode.directors.length > 3 && (
+                          <div className="text-[10px] text-muted-foreground">+{selectedOwnershipNode.directors.length - 3} more</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Beneficial Owners */}
+                  {selectedOwnershipNode.beneficial_owners && selectedOwnershipNode.beneficial_owners.length > 0 && (
+                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
+                      <div className="text-[10px] text-muted-foreground mb-1">
+                        Beneficial Owners ({selectedOwnershipNode.beneficial_owners.length}):
+                      </div>
+                      <div className="space-y-1">
+                        {selectedOwnershipNode.beneficial_owners.slice(0, 3).map((owner: any, i: number) => (
+                          <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
+                            <span>{owner.name}</span>
+                            {owner.ownership_percentage && (
+                              <span className="text-[#00d4ff]">{owner.ownership_percentage}%</span>
+                            )}
+                          </div>
+                        ))}
+                        {selectedOwnershipNode.beneficial_owners.length > 3 && (
+                          <div className="text-[10px] text-muted-foreground">+{selectedOwnershipNode.beneficial_owners.length - 3} more</div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                </CardContent>
+              </Card>
+            )}
           </div>
         </div>
 

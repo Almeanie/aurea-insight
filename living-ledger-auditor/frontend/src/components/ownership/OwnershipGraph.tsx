@@ -48,7 +48,13 @@ interface OwnershipGraphProps {
   isFullscreen?: boolean;
   onExpandClick?: () => void;
   onCloseFullscreen?: () => void;
+  onNodeSelect?: (node: EntityNode | null) => void;
+  selectedNode?: EntityNode | null;
+  showInlineCard?: boolean; // If true, show card inside graph (default behavior)
 }
+
+// Export EntityNode type for parent components
+export type { EntityNode };
 
 // Color mapping for relationship types
 const RELATIONSHIP_COLORS: Record<string, string> = {
@@ -349,7 +355,10 @@ export default function OwnershipGraph({
   height = 400,
   isFullscreen = false,
   onExpandClick,
-  onCloseFullscreen
+  onCloseFullscreen,
+  onNodeSelect,
+  selectedNode: externalSelectedNode,
+  showInlineCard = true
 }: OwnershipGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
@@ -357,35 +366,59 @@ export default function OwnershipGraph({
   const simNodesRef = useRef<any[]>([]);
   const simEdgesRef = useRef<any[]>([]);
   const initializedRef = useRef(false);
-  const [selectedNode, setSelectedNode] = useState<EntityNode | null>(null);
+  const [internalSelectedNode, setInternalSelectedNode] = useState<EntityNode | null>(null);
+  
+  // Use external selected node if provided, otherwise use internal state
+  const selectedNode = externalSelectedNode !== undefined ? externalSelectedNode : internalSelectedNode;
+  const setSelectedNode = (node: EntityNode | null) => {
+    if (onNodeSelect) {
+      onNodeSelect(node);
+    } else {
+      setInternalSelectedNode(node);
+    }
+  };
 
-  // Filter edges to only include valid ones
+  // Filter out nodes with unknown/mock source (no real API data)
+  const validNodes = useMemo(() => {
+    return nodes.filter(n => {
+      // Keep root nodes always
+      if (n.is_root) return true;
+      // Filter out nodes with unknown/empty/mock api_source
+      const source = n.api_source?.toLowerCase();
+      if (!source || source === 'unknown' || source === 'unknown source' || source === 'mock_demo') {
+        return false;
+      }
+      return true;
+    });
+  }, [nodes]);
+
+  // Filter edges to only include valid ones (connected to valid nodes)
   const validEdges = useMemo(() => {
-    const nodeIds = new Set(nodes.map(n => n.id));
+    const nodeIds = new Set(validNodes.map(n => n.id));
     return edges.filter(e => {
       const sourceId = typeof e.source === 'object' ? e.source.id : e.source;
       const targetId = typeof e.target === 'object' ? e.target.id : e.target;
       return nodeIds.has(sourceId) && nodeIds.has(targetId);
     });
-  }, [nodes, edges]);
+  }, [validNodes, edges]);
 
   // Track structure changes (only node IDs and edge connections)
   const structureKey = useMemo(() => {
-    const nodeKey = nodes.map(n => n.id).sort().join(',');
+    const nodeKey = validNodes.map(n => n.id).sort().join(',');
     const edgeKey = validEdges.map(e => {
       const s = typeof e.source === 'object' ? e.source.id : e.source;
       const t = typeof e.target === 'object' ? e.target.id : e.target;
       return `${s}-${t}`;
     }).sort().join(',');
     return `${nodeKey}|${edgeKey}`;
-  }, [nodes, validEdges]);
+  }, [validNodes, validEdges]);
 
   // Update node colors when red_flags or other properties change (without re-rendering)
   useEffect(() => {
     if (!gRef.current || simNodesRef.current.length === 0) return;
 
     // Create a map of current node data
-    const nodeDataMap = new Map(nodes.map(n => [n.id, n]));
+    const nodeDataMap = new Map(validNodes.map(n => [n.id, n]));
 
     // Update simulation nodes with new data
     simNodesRef.current.forEach(simNode => {
@@ -402,11 +435,11 @@ export default function OwnershipGraph({
       .attr("fill", (d: any) => getNodeFill(d))
       .attr("stroke", (d: any) => getNodeStroke(d));
 
-  }, [nodes]); // Run when nodes change (including red_flags updates)
+  }, [validNodes]); // Run when nodes change (including red_flags updates)
 
   // Initialize or update graph structure
   useEffect(() => {
-    if (!svgRef.current || nodes.length === 0) return;
+    if (!svgRef.current || validNodes.length === 0) return;
 
     const svg = d3.select(svgRef.current);
     const centerX = width / 2;
@@ -415,10 +448,10 @@ export default function OwnershipGraph({
 
     // Check if we need to rebuild or just update
     const currentNodeIds = new Set(simNodesRef.current.map(n => n.id));
-    const newNodeIds = new Set(nodes.map(n => n.id));
+    const newNodeIds = new Set(validNodes.map(n => n.id));
     
     // Find new nodes that don't exist yet
-    const nodesToAdd = nodes.filter(n => !currentNodeIds.has(n.id));
+    const nodesToAdd = validNodes.filter(n => !currentNodeIds.has(n.id));
     const nodeIdsToRemove = [...currentNodeIds].filter(id => !newNodeIds.has(id));
 
     // If this is the first render or major structure change, rebuild everything
@@ -439,11 +472,11 @@ export default function OwnershipGraph({
       svg.call(zoom);
 
       // Calculate storage key and try to load saved positions
-      const storageKey = getStorageKey(nodes.map(n => n.id));
+      const storageKey = getStorageKey(validNodes.map(n => n.id));
       const savedPositions = loadNodePositions(storageKey);
       
       // Create simulation nodes with saved positions if available
-      simNodesRef.current = nodes.map((n, i) => {
+      simNodesRef.current = validNodes.map((n, i) => {
         const saved = savedPositions?.[n.id];
         if (saved) {
           return {
@@ -455,7 +488,7 @@ export default function OwnershipGraph({
           };
         }
         
-        const angle = (i / nodes.length) * 2 * Math.PI - Math.PI / 2;
+        const angle = (i / validNodes.length) * 2 * Math.PI - Math.PI / 2;
         const radius = n.is_root ? 0 : 80 + (i % 3) * 40;
         return {
           ...n,
@@ -721,7 +754,7 @@ export default function OwnershipGraph({
       if (!simulation || !gRef.current) return;
       
       // Calculate storage key for incremental updates
-      const incrementalStorageKey = getStorageKey(nodes.map(n => n.id));
+      const incrementalStorageKey = getStorageKey(validNodes.map(n => n.id));
 
       // Add new nodes to simulation
       nodesToAdd.forEach((n, i) => {
@@ -1045,8 +1078,8 @@ export default function OwnershipGraph({
         </div>
       </div>
 
-      {/* Selected Node Info - Detailed Panel */}
-      {selectedNode && (
+      {/* Selected Node Info - Detailed Panel (only show if showInlineCard is true) */}
+      {showInlineCard && selectedNode && (
         <div className={`absolute ${isFullscreen ? 'top-4 right-20' : 'top-10 right-2'} bg-[#111111]/95 backdrop-blur p-3 rounded border border-[#1f1f1f] w-72 ${isFullscreen ? 'max-h-[80vh]' : 'max-h-[350px]'} overflow-y-auto text-sm z-20`}>
           {/* Header */}
           <div className="flex items-start justify-between mb-2">

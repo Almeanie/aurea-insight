@@ -194,13 +194,13 @@ class BeneficialOwnershipDiscovery:
         """
         Discover ownership network starting from seed entities.
         
-        Uses REAL APIs in this order:
+        Uses REAL APIs ONLY in this order:
         1. OpenCorporates (global coverage)
         2. SEC EDGAR (US public companies)
         3. UK Companies House (UK companies with PSC data)
         4. GLEIF (LEI relationships)
         
-        Falls back to deterministic mock data only if ALL APIs return nothing.
+        If no API returns data, the entity is marked as "unknown" and filtered out.
         
         Args:
             seed_entities: List of company/entity names to search
@@ -250,7 +250,7 @@ class BeneficialOwnershipDiscovery:
         # Check API availability and report
         api_status = await self.check_api_availability()
         available_apis = [name for name, status in api_status.items() if status.get("configured")]
-        report_progress(f"APIs available: {', '.join(available_apis) if available_apis else 'None - using mock data'}", 7.0, {"api_status": api_status})
+        report_progress(f"APIs available: {', '.join(available_apis) if available_apis else 'None configured'}", 7.0, {"api_status": api_status})
         
         discovered_entities = {}
         entities_to_process = list(seed_entities)
@@ -325,8 +325,6 @@ class BeneficialOwnershipDiscovery:
                         "gemini_classification": entity_data.get("gemini_classification"),
                         "gemini_risk_level": entity_data.get("gemini_risk_level"),
                         "data_quality_score": entity_data.get("data_quality_score"),
-                        # Flags
-                        "is_mock": entity_data.get("is_mock_data", False),
                     }
                     stream_data("node", node_data)
                     
@@ -531,7 +529,7 @@ class BeneficialOwnershipDiscovery:
                     best_match = sec_results[0]
                     cik = best_match.get("cik", "")
                     
-                    # Get more details
+                    # Get more details from submissions
                     submissions = await self.sec_edgar.get_company_submissions(cik)
                     if submissions:
                         results.update({
@@ -542,7 +540,20 @@ class BeneficialOwnershipDiscovery:
                             "ticker": best_match.get("ticker"),
                             "sic_code": submissions.get("sic"),
                             "sic_description": submissions.get("sic_description"),
+                            "business_address": submissions.get("business_address"),
                         })
+                        
+                        # Fetch beneficial ownership filings for Gemini enrichment
+                        ownership_filings = await self.sec_edgar.get_beneficial_ownership_filings(cik)
+                        if ownership_filings:
+                            results["sec_ownership_filings"] = ownership_filings
+                            logger.info(f"[_lookup_entity_from_apis] Found {len(ownership_filings)} ownership filings for {entity_name}")
+                        
+                        # Get insider transaction count
+                        insider_txns = await self.sec_edgar.get_insider_transactions(cik)
+                        if insider_txns:
+                            results["insider_transaction_count"] = len(insider_txns)
+                        
                         results["api_sources"].append("sec_edgar")
                         self.data_sources[entity_name] = "sec_edgar"
                         logger.info(f"[_lookup_entity_from_apis] Found in SEC EDGAR: {entity_name}")
@@ -618,10 +629,26 @@ class BeneficialOwnershipDiscovery:
                     
                     normalized = self.gleif.normalize_entity_data(best_match)
                     
-                    # Add LEI data
+                    # Add all GLEIF data (not just LEI!)
                     if normalized.get("lei"):
                         found = True
+                        # Merge all normalized GLEIF fields (only if not already set)
                         results["lei"] = normalized.get("lei")
+                        if not results.get("jurisdiction") and normalized.get("jurisdiction"):
+                            results["jurisdiction"] = normalized.get("jurisdiction")
+                        if not results.get("status") and normalized.get("status"):
+                            results["status"] = normalized.get("status")
+                        if not results.get("registration_date") and normalized.get("registration_date"):
+                            results["registration_date"] = normalized.get("registration_date")
+                        if not results.get("registered_address") and normalized.get("registered_address"):
+                            results["registered_address"] = normalized.get("registered_address")
+                        if not results.get("legal_form") and normalized.get("legal_form"):
+                            results["legal_form"] = normalized.get("legal_form")
+                        if not results.get("entity_category") and normalized.get("entity_category"):
+                            results["entity_category"] = normalized.get("entity_category")
+                        if not results.get("headquarters_country") and normalized.get("headquarters_country"):
+                            results["headquarters_country"] = normalized.get("headquarters_country")
+                        
                         results["api_sources"].append("gleif")
                         
                         # Get parent relationships - key for beneficial ownership
@@ -635,20 +662,29 @@ class BeneficialOwnershipDiscovery:
                                 )
                                 results["parent_companies"].append(normalized_parent)
                         
-                        logger.info(f"[_lookup_entity_from_apis] Found in GLEIF: {entity_name} (LEI: {lei})")
+                        logger.info(f"[_lookup_entity_from_apis] Found in GLEIF: {entity_name} (LEI: {lei}, jurisdiction: {normalized.get('jurisdiction')}, status: {normalized.get('status')})")
                 else:
                     logger.debug(f"[_lookup_entity_from_apis] GLEIF: No match for '{entity_name}'")
             except Exception as e:
                 self.api_stats["gleif"]["errors"] += 1
                 logger.warning(f"[_lookup_entity_from_apis] GLEIF error for {entity_name}: {e}")
         
-        # If nothing found from real APIs, use deterministic mock data for demo
+        # If nothing found from real APIs, return with unknown source (will be filtered out by frontend)
         if not found:
-            logger.info(f"[_lookup_entity_from_apis] No API results, using mock data for: {entity_name}")
-            mock_data = self._generate_deterministic_mock(entity_name)
-            mock_data["api_sources"] = ["mock_demo"]
-            self.data_sources[entity_name] = "mock_demo"
-            return mock_data
+            logger.info(f"[_lookup_entity_from_apis] No API results for: {entity_name} - marking as unknown")
+            # Return minimal data with unknown source - frontend will filter this out
+            return {
+                "company_name": entity_name,
+                "jurisdiction": None,
+                "status": None,
+                "registration_number": None,
+                "beneficial_owners": [],
+                "directors": [],
+                "parent_companies": [],
+                "red_flags": ["No data found in any official registry"],
+                "api_sources": ["unknown"],  # Frontend will filter this out
+                "is_boilerplate": False
+            }
         
         # Use Gemini to classify and enrich the data (NOT generate)
         if results["api_sources"]:
@@ -677,30 +713,55 @@ class BeneficialOwnershipDiscovery:
             return entity_data
         
         try:
-            # Build a classification prompt
+            # Build a classification and enrichment prompt
+            api_data = self._format_for_gemini(entity_data)
+            
+            # Include SEC filings summary if available
+            sec_filings_info = ""
+            if entity_data.get("sec_ownership_filings"):
+                filings = entity_data["sec_ownership_filings"]
+                filings_summary = ", ".join([f"{f['form_type']} ({f.get('filing_date', 'N/A')})" for f in filings[:3]])
+                sec_filings_info = f"""
+SEC OWNERSHIP FILINGS AVAILABLE:
+{filings_summary}
+These filings contain beneficial ownership information that can be used to understand the ownership structure.
+Insider transaction count: {entity_data.get('insider_transaction_count', 0)}
+"""
+            
             prompt = f"""
-You are analyzing REAL company registry data (NOT generating fake data).
-Your task is to CLASSIFY and ENRICH this data, not invent new information.
+You are analyzing REAL company registry data from official sources.
+Your task is to:
+1. CLASSIFY this entity based on the available data
+2. ENRICH missing fields using logical inference from the documentation
+3. Flag any data quality issues
 
 REAL API DATA:
-{self._format_for_gemini(entity_data)}
+{api_data}
+{sec_filings_info}
 
 Based on this REAL data, provide:
 1. Entity classification (public_company, private_company, shell_company_risk, holding_company, etc.)
 2. Risk assessment based on ACTUAL data (jurisdiction, missing info, patterns)
-3. Normalized beneficial ownership structure
+3. If data is missing, note what COULD be found by examining the SEC filings
 4. Any red flags visible in the ACTUAL data
 
-IMPORTANT: Only analyze what's in the data. Do NOT invent owners, directors, or other information.
+ENRICHMENT RULES:
+- If SEC filings are listed, the company is a public company
+- If there are insider transactions, ownership is likely institutional/public
+- SIC codes indicate the industry sector
+- Business addresses can reveal geographic operations
+- Missing beneficial owner data in public companies suggests widely-held stock
 
 Return JSON:
 {{
     "entity_classification": "private_company|public_company|holding_company|shell_risk|unknown",
     "risk_level": "low|medium|high|critical",
     "risk_factors": ["List of ACTUAL risk factors from the data"],
-    "ownership_structure_type": "simple|complex|layered|circular_risk",
+    "ownership_structure_type": "simple|complex|layered|circular_risk|publicly_traded",
     "data_quality_score": 0.0 to 1.0,
-    "notes": "Any observations about the REAL data"
+    "inferred_company_type": "If public company with SEC filings, specify: 'Publicly traded, beneficial ownership via SEC Form 4/13D filings'",
+    "industry_sector": "Infer from SIC code if available",
+    "notes": "Any observations about the REAL data and what additional info could be obtained"
 }}
 """
             
@@ -760,84 +821,6 @@ Return JSON:
         }
         return json.dumps(safe_data, indent=2, default=str)
     
-    def _generate_deterministic_mock(self, entity_name: str) -> dict:
-        """
-        Generate deterministic synthetic entity data for DEMO purposes.
-        Used ONLY when all real APIs return nothing.
-        
-        Args:
-            entity_name: Entity name
-            
-        Returns:
-            Mock entity data (clearly labeled as mock)
-        """
-        import hashlib
-        
-        # Use hash of name to generate consistent but varied data
-        name_hash = int(hashlib.md5(entity_name.encode()).hexdigest()[:8], 16)
-        
-        jurisdictions = [
-            ("Delaware, USA", "us_de"),
-            ("Nevada, USA", "us_nv"),
-            ("California, USA", "us_ca"),
-            ("New York, USA", "us_ny"),
-            ("United Kingdom", "gb"),
-            ("Cayman Islands", "ky"),
-            ("British Virgin Islands", "vg"),
-            ("Ireland", "ie"),
-            ("Luxembourg", "lu"),
-        ]
-        
-        first_names = ["John", "Jane", "Michael", "Sarah", "Robert", "Emily", "David", "Lisa"]
-        last_names = ["Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Wilson"]
-        
-        jurisdiction, jcode = jurisdictions[name_hash % len(jurisdictions)]
-        
-        # Generate owners
-        num_owners = (name_hash % 3) + 1
-        owners = []
-        for i in range(num_owners):
-            owner_first = first_names[(name_hash + i) % len(first_names)]
-            owner_last = last_names[(name_hash + i + 3) % len(last_names)]
-            owners.append({
-                "name": f"{owner_first} {owner_last}",
-                "ownership_percentage": round(100.0 / num_owners, 1),
-                "type": "individual",
-                "api_source": "mock_demo"
-            })
-        
-        # Generate director
-        director_first = first_names[(name_hash + 5) % len(first_names)]
-        director_last = last_names[(name_hash + 7) % len(last_names)]
-        
-        # Add red flags for certain jurisdictions
-        red_flags = ["DEMO DATA - Not from real registry"]
-        if jcode in ["ky", "vg", "lu"]:
-            red_flags.append("Secrecy jurisdiction")
-        if (name_hash % 5) == 0:
-            red_flags.append("Recently incorporated")
-        
-        return {
-            "company_name": entity_name,
-            "jurisdiction": jurisdiction,
-            "jurisdiction_code": jcode,
-            "registration_number": f"MOCK-{name_hash % 1000000:06d}",
-            "registration_date": f"20{(name_hash % 10) + 15}-{(name_hash % 12) + 1:02d}-{(name_hash % 28) + 1:02d}",
-            "status": "active",
-            "registered_address": f"{name_hash % 999 + 1} Demo Street, {jurisdiction}",
-            "beneficial_owners": owners,
-            "directors": [
-                {
-                    "name": f"{director_first} {director_last}",
-                    "role": "Director",
-                    "api_source": "mock_demo"
-                }
-            ],
-            "parent_companies": [],
-            "red_flags": red_flags,
-            "is_mock_data": True
-        }
-    
     def _add_to_graph(self, entity_data: dict):
         """Add entity and relationships to the network graph."""
         
@@ -853,7 +836,7 @@ Return JSON:
             address=entity_data.get("registered_address"),
             red_flags=entity_data.get("red_flags", []),
             api_sources=entity_data.get("api_sources", []),
-            is_mock=entity_data.get("is_mock_data", False),
+            is_unknown=entity_data.get("api_sources", ["unknown"])[0] == "unknown",
             is_boilerplate=is_boilerplate
         )
         
@@ -955,7 +938,7 @@ Return JSON:
                         "name": node,
                         "jurisdiction": data.get("jurisdiction"),
                         "red_flags": data.get("red_flags", []),
-                        "is_mock": data.get("is_mock", False)
+                        "api_sources": data.get("api_sources", [])
                     })
                 else:
                     graph_summary["individuals"].append(node)
@@ -1156,9 +1139,9 @@ Return JSON:
             "entities_by_source": {k: len(v) for k, v in sources.items()},
             "total_from_real_apis": sum(
                 len(v) for k, v in sources.items() 
-                if k not in ["mock_demo", "boilerplate_detection"]
+                if k not in ["unknown", "boilerplate_detection"]
             ),
-            "total_mock": len(sources.get("mock_demo", [])),
+            "total_unknown": len(sources.get("unknown", [])),
             "total_boilerplate": len(sources.get("boilerplate_detection", [])),
             "api_stats": self.api_stats,
             "api_status": self.api_status,

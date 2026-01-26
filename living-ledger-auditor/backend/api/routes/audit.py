@@ -53,7 +53,7 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
         # Initialize audit engine
         logger.info(f"[_run_audit_task] Initializing audit engine")
         progress_tracker.add_step(audit_id, "info", "Initializing audit engine...", progress_percent=5.0, current_step=1, step_name="Initialization")
-        progress_tracker.set_total_steps(audit_id, 8)  # 8 main phases
+        progress_tracker.set_total_steps(audit_id, 7)  # 7 main phases
         engine = AuditEngine()
         
         # Data callback to stream findings/ajes/risk to frontend
@@ -101,7 +101,12 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
         results = await engine.run_full_audit(
             company_data=company_data,
             audit_record=record,
-            progress_callback=lambda msg, pct: progress_tracker.add_step(audit_id, "info", msg, progress_percent=pct),
+            progress_callback=lambda msg, pct, step=None, total=7: progress_tracker.add_step(
+                audit_id, "info", msg, 
+                progress_percent=pct, 
+                current_step=step, 
+                total_steps=total
+            ),
             data_callback=data_callback,
             is_cancelled=is_cancelled,
             save_checkpoint=save_checkpoint,
