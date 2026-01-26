@@ -1095,7 +1095,21 @@ export default function CompanyPage({ params }: PageProps) {
                               type: n.type || "company",
                               risk_level: n.red_flags?.length > 0 ? "high" : "low",
                               jurisdiction: n.jurisdiction,
-                              data_source: n.api_source
+                              red_flags: n.red_flags || [],
+                              api_source: n.api_source,
+                              registration_number: n.registration_number,
+                              status: n.status,
+                              is_boilerplate: n.is_boilerplate,
+                              is_root: n.is_root,
+                              registered_address: n.registered_address,
+                              registration_date: n.registration_date,
+                              beneficial_owners: n.beneficial_owners,
+                              directors: n.directors,
+                              lei: n.lei,
+                              ticker: n.ticker,
+                              gemini_classification: n.gemini_classification,
+                              data_quality_score: n.data_quality_score,
+                              is_mock: n.is_mock
                             }))}
                             edges={ownershipGraph?.edges || streamingEdges.map(e => ({
                               source: e.source,

@@ -17,6 +17,19 @@ interface EntityNode {
   vy?: number;
   fx?: number | null;
   fy?: number | null;
+  // Additional data from registrar/APIs
+  api_source?: string;
+  registration_number?: string;
+  status?: string;
+  registered_address?: string;
+  registration_date?: string;
+  beneficial_owners?: any[];
+  directors?: any[];
+  lei?: string;
+  ticker?: string;
+  gemini_classification?: string;
+  data_quality_score?: number;
+  is_mock?: boolean;
 }
 
 interface OwnershipEdge {
@@ -69,6 +82,24 @@ function formatLabel(edge: OwnershipEdge): string {
   return rel.slice(0, 6);
 }
 
+// Get node fill color
+function getNodeFill(node: EntityNode): string {
+  if (node.is_root) return "#10b981";
+  if (node.is_boilerplate || node.type === "boilerplate") return "#6b7280";
+  if (node.red_flags && node.red_flags.length > 0) return "#ef4444";
+  if (node.type === "company") return "#3b82f6";
+  if (node.type === "individual") return "#8b5cf6";
+  return "#666666";
+}
+
+// Get node stroke color
+function getNodeStroke(node: EntityNode): string {
+  if (node.is_root) return "#34d399";
+  if (node.is_boilerplate || node.type === "boilerplate") return "#9ca3af";
+  if (node.red_flags && node.red_flags.length > 0) return "#ff3366";
+  return "#00d4ff";
+}
+
 // Check if a point is too close to a line segment
 function pointToSegmentDistance(
   px: number, py: number,
@@ -90,30 +121,30 @@ function pointToSegmentDistance(
   return Math.sqrt((px - nearestX) ** 2 + (py - nearestY) ** 2);
 }
 
-// Custom force to push nodes away from edges they're not connected to
+// Custom force to push nodes away from edges
 function forceAvoidEdges(links: any[], nodeRadius: number) {
   let nodes: any[] = [];
   
   function force(alpha: number) {
+    const minDist = nodeRadius + 25;
+    
     for (const node of nodes) {
+      if (node.fx !== null && node.fy !== null) continue;
+      
       for (const link of links) {
         const source = link.source;
         const target = link.target;
         
-        // Skip if this node is part of this edge
+        if (!source.x || !target.x) continue;
         if (node.id === source.id || node.id === target.id) continue;
         
-        // Calculate distance from node to edge
         const dist = pointToSegmentDistance(
           node.x, node.y,
           source.x, source.y,
           target.x, target.y
         );
         
-        // If too close, push the node away
-        const minDist = nodeRadius + 15;
         if (dist < minDist && dist > 0) {
-          // Find the nearest point on the line
           const dx = target.x - source.x;
           const dy = target.y - source.y;
           const lengthSq = dx * dx + dy * dy;
@@ -125,18 +156,47 @@ function forceAvoidEdges(links: any[], nodeRadius: number) {
             const nearestX = source.x + t * dx;
             const nearestY = source.y + t * dy;
             
-            // Push perpendicular to the edge
-            const pushX = node.x - nearestX;
-            const pushY = node.y - nearestY;
+            let pushX = node.x - nearestX;
+            let pushY = node.y - nearestY;
             const pushDist = Math.sqrt(pushX * pushX + pushY * pushY);
             
             if (pushDist > 0) {
-              const strength = alpha * (minDist - dist) / minDist * 2;
-              node.vx += (pushX / pushDist) * strength * 20;
-              node.vy += (pushY / pushDist) * strength * 20;
+              const strength = alpha * Math.pow((minDist - dist) / minDist, 2) * 50;
+              node.vx += (pushX / pushDist) * strength;
+              node.vy += (pushY / pushDist) * strength;
+            } else {
+              node.vx += (Math.random() - 0.5) * alpha * 30;
+              node.vy += (Math.random() - 0.5) * alpha * 30;
             }
           }
         }
+      }
+    }
+  }
+  
+  force.initialize = function(_nodes: any[]) {
+    nodes = _nodes;
+  };
+  
+  return force;
+}
+
+// Force to keep graph compact
+function forceCompact(centerX: number, centerY: number, strength: number) {
+  let nodes: any[] = [];
+  
+  function force(alpha: number) {
+    for (const node of nodes) {
+      if (node.fx !== null && node.fy !== null) continue;
+      
+      const dx = centerX - node.x;
+      const dy = centerY - node.y;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      
+      if (dist > 100) {
+        const pull = alpha * strength * Math.min(dist / 500, 1);
+        node.vx += dx * pull;
+        node.vy += dy * pull;
       }
     }
   }
@@ -155,9 +215,14 @@ export default function OwnershipGraph({
   height = 400 
 }: OwnershipGraphProps) {
   const svgRef = useRef<SVGSVGElement>(null);
+  const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
+  const simulationRef = useRef<d3.Simulation<any, any> | null>(null);
+  const simNodesRef = useRef<any[]>([]);
+  const simEdgesRef = useRef<any[]>([]);
+  const initializedRef = useRef(false);
   const [selectedNode, setSelectedNode] = useState<EntityNode | null>(null);
 
-  // Filter edges to only include those with valid node references
+  // Filter edges to only include valid ones
   const validEdges = useMemo(() => {
     const nodeIds = new Set(nodes.map(n => n.id));
     return edges.filter(e => {
@@ -167,246 +232,474 @@ export default function OwnershipGraph({
     });
   }, [nodes, edges]);
 
+  // Track structure changes (only node IDs and edge connections)
+  const structureKey = useMemo(() => {
+    const nodeKey = nodes.map(n => n.id).sort().join(',');
+    const edgeKey = validEdges.map(e => {
+      const s = typeof e.source === 'object' ? e.source.id : e.source;
+      const t = typeof e.target === 'object' ? e.target.id : e.target;
+      return `${s}-${t}`;
+    }).sort().join(',');
+    return `${nodeKey}|${edgeKey}`;
+  }, [nodes, validEdges]);
+
+  // Update node colors when red_flags or other properties change (without re-rendering)
+  useEffect(() => {
+    if (!gRef.current || simNodesRef.current.length === 0) return;
+
+    // Create a map of current node data
+    const nodeDataMap = new Map(nodes.map(n => [n.id, n]));
+
+    // Update simulation nodes with new data
+    simNodesRef.current.forEach(simNode => {
+      const newData = nodeDataMap.get(simNode.id);
+      if (newData) {
+        simNode.red_flags = newData.red_flags;
+        simNode.is_boilerplate = newData.is_boilerplate;
+        simNode.jurisdiction = newData.jurisdiction;
+      }
+    });
+
+    // Update visual appearance of nodes
+    gRef.current.selectAll(".nodes g circle")
+      .attr("fill", (d: any) => getNodeFill(d))
+      .attr("stroke", (d: any) => getNodeStroke(d));
+
+  }, [nodes]); // Run when nodes change (including red_flags updates)
+
+  // Initialize or update graph structure
   useEffect(() => {
     if (!svgRef.current || nodes.length === 0) return;
 
     const svg = d3.select(svgRef.current);
-    svg.selectAll("*").remove();
-
     const centerX = width / 2;
     const centerY = height / 2;
     const nodeRadius = 18;
 
-    // Create container group with zoom
-    const g = svg.append("g");
+    // Check if we need to rebuild or just update
+    const currentNodeIds = new Set(simNodesRef.current.map(n => n.id));
+    const newNodeIds = new Set(nodes.map(n => n.id));
+    
+    // Find new nodes that don't exist yet
+    const nodesToAdd = nodes.filter(n => !currentNodeIds.has(n.id));
+    const nodeIdsToRemove = [...currentNodeIds].filter(id => !newNodeIds.has(id));
 
-    // Setup zoom behavior
-    const zoom = d3.zoom<SVGSVGElement, unknown>()
-      .scaleExtent([0.2, 4])
-      .on("zoom", (event) => {
-        g.attr("transform", event.transform);
+    // If this is the first render or major structure change, rebuild everything
+    if (!initializedRef.current || nodeIdsToRemove.length > simNodesRef.current.length / 2) {
+      // Full rebuild
+      svg.selectAll("*").remove();
+      initializedRef.current = true;
+
+      const g = svg.append("g");
+      gRef.current = g;
+
+      // Setup zoom
+      const zoom = d3.zoom<SVGSVGElement, unknown>()
+        .scaleExtent([0.2, 4])
+        .on("zoom", (event) => {
+          g.attr("transform", event.transform);
+        });
+      svg.call(zoom);
+
+      // Create simulation nodes
+      simNodesRef.current = nodes.map((n, i) => {
+        const angle = (i / nodes.length) * 2 * Math.PI - Math.PI / 2;
+        const radius = n.is_root ? 0 : 80 + (i % 3) * 40;
+        return {
+          ...n,
+          x: centerX + radius * Math.cos(angle),
+          y: centerY + radius * Math.sin(angle),
+          fx: n.is_root ? centerX : null,
+          fy: n.is_root ? centerY : null,
+        };
       });
 
-    svg.call(zoom);
+      // Create simulation edges
+      simEdgesRef.current = validEdges.map(e => ({
+        ...e,
+        source: typeof e.source === 'object' ? e.source.id : e.source,
+        target: typeof e.target === 'object' ? e.target.id : e.target,
+      }));
 
-    // Create node copies for simulation - spread them out initially
-    const simNodes = nodes.map((n, i) => {
-      const angle = (i / nodes.length) * 2 * Math.PI;
-      const radius = n.is_root ? 0 : 150 + Math.random() * 100;
-      return {
-        ...n,
-        x: centerX + radius * Math.cos(angle),
-        y: centerY + radius * Math.sin(angle),
-        fx: n.is_root ? centerX : null,
-        fy: n.is_root ? centerY : null,
-      };
-    });
-
-    // Create edge copies for simulation
-    const simEdges = validEdges.map(e => ({
-      ...e,
-      source: typeof e.source === 'object' ? e.source.id : e.source,
-      target: typeof e.target === 'object' ? e.target.id : e.target,
-    }));
-
-    // Create force simulation with strong separation
-    const linkForce = d3.forceLink(simEdges as any)
-      .id((d: any) => d.id)
-      .distance(120)
-      .strength(0.3);
-
-    const simulation = d3.forceSimulation(simNodes as any)
-      .force("link", linkForce)
-      .force("charge", d3.forceManyBody()
-        .strength(-500)
-        .distanceMax(500))
-      .force("center", d3.forceCenter(centerX, centerY))
-      .force("collision", d3.forceCollide().radius(nodeRadius + 30).strength(1))
-      .force("avoidEdges", forceAvoidEdges(simEdges, nodeRadius));
-
-    // Create gradient definitions
-    const defs = svg.append("defs");
-    
-    // Glow filter
-    const filter = defs.append("filter")
-      .attr("id", "glow")
-      .attr("x", "-50%")
-      .attr("y", "-50%")
-      .attr("width", "200%")
-      .attr("height", "200%");
-    
-    filter.append("feGaussianBlur")
-      .attr("stdDeviation", "2")
-      .attr("result", "coloredBlur");
-    
-    const feMerge = filter.append("feMerge");
-    feMerge.append("feMergeNode").attr("in", "coloredBlur");
-    feMerge.append("feMergeNode").attr("in", "SourceGraphic");
-
-    // Draw edges
-    const edgeGroup = g.append("g").attr("class", "edges");
-    
-    const links = edgeGroup.selectAll("line")
-      .data(simEdges)
-      .enter()
-      .append("line")
-      .attr("stroke", d => getEdgeColor(d as any))
-      .attr("stroke-width", 2)
-      .attr("stroke-opacity", 0.7);
-
-    // Edge labels group
-    const labelGroup = g.append("g").attr("class", "edge-labels");
-    
-    const edgeLabels = labelGroup.selectAll("g")
-      .data(simEdges)
-      .enter()
-      .append("g");
-
-    // Label background
-    edgeLabels.append("rect")
-      .attr("fill", d => getEdgeColor(d as any))
-      .attr("rx", 3)
-      .attr("ry", 3)
-      .attr("opacity", 0.9);
-
-    // Label text
-    edgeLabels.append("text")
-      .attr("text-anchor", "middle")
-      .attr("dominant-baseline", "middle")
-      .attr("fill", "#ffffff")
-      .attr("font-size", "8px")
-      .attr("font-weight", "500")
-      .text(d => formatLabel(d as any));
-
-    // Size the label backgrounds based on text
-    edgeLabels.each(function(d) {
-      const g = d3.select(this);
-      const text = g.select("text");
-      const bbox = (text.node() as SVGTextElement)?.getBBox();
-      if (bbox) {
-        g.select("rect")
-          .attr("x", -bbox.width / 2 - 4)
-          .attr("y", -bbox.height / 2 - 2)
-          .attr("width", bbox.width + 8)
-          .attr("height", bbox.height + 4);
+      // Stop existing simulation
+      if (simulationRef.current) {
+        simulationRef.current.stop();
       }
-    });
 
-    // Draw nodes on top
-    const nodeGroup = g.append("g").attr("class", "nodes");
-    
-    const nodeElements = nodeGroup.selectAll("g")
-      .data(simNodes)
-      .enter()
-      .append("g")
-      .attr("cursor", "pointer")
-      .call(d3.drag<any, any>()
-        .on("start", (event, d) => {
-          if (!event.active) simulation.alphaTarget(0.3).restart();
-          d.fx = d.x;
-          d.fy = d.y;
-        })
-        .on("drag", (event, d) => {
-          d.fx = event.x;
-          d.fy = event.y;
-        })
-        .on("end", (event, d) => {
-          if (!event.active) simulation.alphaTarget(0);
-          if (!d.is_root) {
-            d.fx = null;
-            d.fy = null;
+      // Create new simulation
+      const linkForce = d3.forceLink(simEdgesRef.current as any)
+        .id((d: any) => d.id)
+        .distance(80)
+        .strength(0.7);
+
+      const simulation = d3.forceSimulation(simNodesRef.current as any)
+        .force("link", linkForce)
+        .force("charge", d3.forceManyBody().strength(-200).distanceMax(300))
+        .force("collision", d3.forceCollide().radius(nodeRadius + 20).strength(1))
+        .force("avoidEdges", forceAvoidEdges(simEdgesRef.current, nodeRadius))
+        .force("compact", forceCompact(centerX, centerY, 0.02))
+        .velocityDecay(0.4);
+
+      simulationRef.current = simulation;
+
+      // Create defs
+      const defs = svg.append("defs");
+      const filter = defs.append("filter")
+        .attr("id", "glow")
+        .attr("x", "-50%").attr("y", "-50%")
+        .attr("width", "200%").attr("height", "200%");
+      filter.append("feGaussianBlur").attr("stdDeviation", "2").attr("result", "coloredBlur");
+      const feMerge = filter.append("feMerge");
+      feMerge.append("feMergeNode").attr("in", "coloredBlur");
+      feMerge.append("feMergeNode").attr("in", "SourceGraphic");
+
+      // Draw edges
+      const edgeGroup = g.append("g").attr("class", "edges");
+      const links = edgeGroup.selectAll("line")
+        .data(simEdgesRef.current)
+        .enter()
+        .append("line")
+        .attr("stroke", d => getEdgeColor(d as any))
+        .attr("stroke-width", 2)
+        .attr("stroke-opacity", 0.7);
+
+      // Edge labels
+      const labelGroup = g.append("g").attr("class", "edge-labels");
+      const edgeLabels = labelGroup.selectAll("g")
+        .data(simEdgesRef.current)
+        .enter()
+        .append("g");
+
+      edgeLabels.append("rect")
+        .attr("fill", d => getEdgeColor(d as any))
+        .attr("rx", 3).attr("ry", 3)
+        .attr("opacity", 0.9);
+
+      edgeLabels.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dominant-baseline", "middle")
+        .attr("fill", "#ffffff")
+        .attr("font-size", "8px")
+        .attr("font-weight", "500")
+        .text(d => formatLabel(d as any));
+
+      edgeLabels.each(function() {
+        const grp = d3.select(this);
+        const text = grp.select("text");
+        const bbox = (text.node() as SVGTextElement)?.getBBox();
+        if (bbox) {
+          grp.select("rect")
+            .attr("x", -bbox.width / 2 - 4)
+            .attr("y", -bbox.height / 2 - 2)
+            .attr("width", bbox.width + 8)
+            .attr("height", bbox.height + 4);
+        }
+      });
+
+      // Draw nodes
+      const nodeGroup = g.append("g").attr("class", "nodes");
+      const nodeElements = nodeGroup.selectAll("g")
+        .data(simNodesRef.current)
+        .enter()
+        .append("g")
+        .attr("cursor", "pointer")
+        .call(d3.drag<any, any>()
+          .on("start", (event, d) => {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+          })
+          .on("drag", (event, d) => {
+            d.fx = event.x;
+            d.fy = event.y;
+          })
+          .on("end", (event, d) => {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = d.x;
+            d.fy = d.y;
+          }))
+        .on("click", (event, d) => {
+          event.stopPropagation();
+          setSelectedNode(d as EntityNode);
+        });
+
+      nodeElements.append("circle")
+        .attr("r", d => d.is_root ? 24 : nodeRadius)
+        .attr("fill", d => getNodeFill(d))
+        .attr("stroke", d => getNodeStroke(d))
+        .attr("stroke-width", d => d.is_root ? 3 : 2)
+        .attr("filter", "url(#glow)");
+
+      nodeElements.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", "0.35em")
+        .attr("fill", "white")
+        .attr("font-size", d => d.is_root ? "12px" : "10px")
+        .attr("font-weight", d => d.is_root ? "bold" : "normal")
+        .attr("pointer-events", "none")
+        .text(d => {
+          if (d.is_root) return "A";
+          if (d.is_boilerplate || d.type === "boilerplate") return "?";
+          if (d.type === "company") return "B";
+          if (d.type === "individual") return "P";
+          return "?";
+        });
+
+      nodeElements.append("text")
+        .attr("class", "node-label")
+        .attr("text-anchor", "middle")
+        .attr("y", d => (d.is_root ? 24 : nodeRadius) + 12)
+        .attr("fill", "#fafafa")
+        .attr("font-size", "9px")
+        .attr("pointer-events", "none")
+        .text(d => {
+          const name = d.name || d.id;
+          return name.length > 14 ? name.slice(0, 14) + "..." : name;
+        });
+
+      // Tick function
+      simulation.on("tick", () => {
+        links
+          .attr("x1", (d: any) => d.source.x)
+          .attr("y1", (d: any) => d.source.y)
+          .attr("x2", (d: any) => d.target.x)
+          .attr("y2", (d: any) => d.target.y);
+
+        edgeLabels.attr("transform", (d: any) => {
+          const midX = (d.source.x + d.target.x) / 2;
+          const midY = (d.source.y + d.target.y) / 2;
+          return `translate(${midX},${midY})`;
+        });
+
+        nodeElements.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
+      });
+
+      simulation.alpha(0.5).restart();
+
+      // Auto zoom to fit
+      setTimeout(() => {
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        simNodesRef.current.forEach(n => {
+          if (n.x < minX) minX = n.x;
+          if (n.x > maxX) maxX = n.x;
+          if (n.y < minY) minY = n.y;
+          if (n.y > maxY) maxY = n.y;
+        });
+        
+        const graphWidth = maxX - minX + 100;
+        const graphHeight = maxY - minY + 100;
+        const scale = Math.min(width / graphWidth, height / graphHeight, 1) * 0.9;
+        const translateX = width / 2 - (minX + maxX) / 2 * scale;
+        const translateY = height / 2 - (minY + maxY) / 2 * scale;
+        
+        svg.transition().duration(500).call(
+          zoom.transform,
+          d3.zoomIdentity.translate(translateX, translateY).scale(scale)
+        );
+      }, 1000);
+
+    } else if (nodesToAdd.length > 0) {
+      // Incremental update - add new nodes without resetting existing positions
+      const simulation = simulationRef.current;
+      if (!simulation || !gRef.current) return;
+
+      // Add new nodes to simulation
+      nodesToAdd.forEach((n, i) => {
+        // Position new nodes near related nodes or at edge of existing cluster
+        let x = centerX + (Math.random() - 0.5) * 100;
+        let y = centerY + (Math.random() - 0.5) * 100;
+        
+        // Try to position near a connected node
+        const connectedEdge = validEdges.find(e => {
+          const s = typeof e.source === 'object' ? e.source.id : e.source;
+          const t = typeof e.target === 'object' ? e.target.id : e.target;
+          return s === n.id || t === n.id;
+        });
+        
+        if (connectedEdge) {
+          const connectedId = typeof connectedEdge.source === 'object' 
+            ? connectedEdge.source.id 
+            : connectedEdge.source;
+          const otherId = connectedId === n.id 
+            ? (typeof connectedEdge.target === 'object' ? connectedEdge.target.id : connectedEdge.target)
+            : connectedId;
+          const connectedNode = simNodesRef.current.find(sn => sn.id === otherId);
+          if (connectedNode) {
+            const angle = Math.random() * 2 * Math.PI;
+            x = connectedNode.x + 80 * Math.cos(angle);
+            y = connectedNode.y + 80 * Math.sin(angle);
           }
-        }))
-      .on("click", (event, d) => {
-        event.stopPropagation();
-        setSelectedNode(d as EntityNode);
+        }
+
+        simNodesRef.current.push({
+          ...n,
+          x,
+          y,
+          fx: n.is_root ? centerX : null,
+          fy: n.is_root ? centerY : null,
+        });
       });
 
-    // Node circles
-    nodeElements.append("circle")
-      .attr("r", d => d.is_root ? 24 : nodeRadius)
-      .attr("fill", d => {
-        if (d.is_root) return "#10b981";
-        if (d.is_boilerplate || d.type === "boilerplate") return "#6b7280";
-        if (d.red_flags && d.red_flags.length > 0) return "#ef4444";
-        if (d.type === "company") return "#3b82f6";
-        if (d.type === "individual") return "#8b5cf6";
-        return "#666666";
-      })
-      .attr("stroke", d => {
-        if (d.is_root) return "#34d399";
-        if (d.is_boilerplate || d.type === "boilerplate") return "#9ca3af";
-        if (d.red_flags && d.red_flags.length > 0) return "#ff3366";
-        return "#00d4ff";
-      })
-      .attr("stroke-width", d => d.is_root ? 3 : 2)
-      .attr("filter", "url(#glow)");
+      // Add new edges
+      const currentEdgeKeys = new Set(simEdgesRef.current.map((e: any) => {
+        const s = typeof e.source === 'object' ? e.source.id : e.source;
+        const t = typeof e.target === 'object' ? e.target.id : e.target;
+        return `${s}-${t}`;
+      }));
 
-    // Node icons
-    nodeElements.append("text")
-      .attr("text-anchor", "middle")
-      .attr("dy", "0.35em")
-      .attr("fill", "white")
-      .attr("font-size", d => d.is_root ? "12px" : "10px")
-      .attr("font-weight", d => d.is_root ? "bold" : "normal")
-      .attr("pointer-events", "none")
-      .text(d => {
-        if (d.is_root) return "A";
-        if (d.is_boilerplate || d.type === "boilerplate") return "?";
-        if (d.type === "company") return "B";
-        if (d.type === "individual") return "P";
-        return "?";
+      validEdges.forEach(e => {
+        const s = typeof e.source === 'object' ? e.source.id : e.source;
+        const t = typeof e.target === 'object' ? e.target.id : e.target;
+        const key = `${s}-${t}`;
+        if (!currentEdgeKeys.has(key)) {
+          simEdgesRef.current.push({
+            ...e,
+            source: s,
+            target: t,
+          });
+        }
       });
 
-    // Node labels
-    nodeElements.append("text")
-      .attr("text-anchor", "middle")
-      .attr("y", d => (d.is_root ? 24 : nodeRadius) + 12)
-      .attr("fill", "#fafafa")
-      .attr("font-size", "9px")
-      .attr("pointer-events", "none")
-      .text(d => {
-        const name = d.name || d.id;
-        return name.length > 14 ? name.slice(0, 14) + "..." : name;
+      // Update simulation with new data
+      simulation.nodes(simNodesRef.current);
+      (simulation.force("link") as d3.ForceLink<any, any>).links(simEdgesRef.current);
+      simulation.force("avoidEdges", forceAvoidEdges(simEdgesRef.current, nodeRadius));
+
+      // Rebuild visual elements
+      const g = gRef.current;
+
+      // Update edges
+      const edgeGroup = g.select(".edges");
+      edgeGroup.selectAll("line").remove();
+      edgeGroup.selectAll("line")
+        .data(simEdgesRef.current)
+        .enter()
+        .append("line")
+        .attr("stroke", d => getEdgeColor(d as any))
+        .attr("stroke-width", 2)
+        .attr("stroke-opacity", 0.7);
+
+      // Update edge labels
+      const labelGroup = g.select(".edge-labels");
+      labelGroup.selectAll("g").remove();
+      const edgeLabels = labelGroup.selectAll("g")
+        .data(simEdgesRef.current)
+        .enter()
+        .append("g");
+
+      edgeLabels.append("rect")
+        .attr("fill", d => getEdgeColor(d as any))
+        .attr("rx", 3).attr("ry", 3)
+        .attr("opacity", 0.9);
+
+      edgeLabels.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dominant-baseline", "middle")
+        .attr("fill", "#ffffff")
+        .attr("font-size", "8px")
+        .attr("font-weight", "500")
+        .text(d => formatLabel(d as any));
+
+      edgeLabels.each(function() {
+        const grp = d3.select(this);
+        const text = grp.select("text");
+        const bbox = (text.node() as SVGTextElement)?.getBBox();
+        if (bbox) {
+          grp.select("rect")
+            .attr("x", -bbox.width / 2 - 4)
+            .attr("y", -bbox.height / 2 - 2)
+            .attr("width", bbox.width + 8)
+            .attr("height", bbox.height + 4);
+        }
       });
 
-    // Update positions on simulation tick
-    simulation.on("tick", () => {
-      // Update link positions
-      links
-        .attr("x1", (d: any) => d.source.x)
-        .attr("y1", (d: any) => d.source.y)
-        .attr("x2", (d: any) => d.target.x)
-        .attr("y2", (d: any) => d.target.y);
+      // Update nodes
+      const nodeGroup = g.select(".nodes");
+      nodeGroup.selectAll("g").remove();
+      const nodeElements = nodeGroup.selectAll("g")
+        .data(simNodesRef.current)
+        .enter()
+        .append("g")
+        .attr("cursor", "pointer")
+        .call(d3.drag<any, any>()
+          .on("start", (event, d) => {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+          })
+          .on("drag", (event, d) => {
+            d.fx = event.x;
+            d.fy = event.y;
+          })
+          .on("end", (event, d) => {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = d.x;
+            d.fy = d.y;
+          }))
+        .on("click", (event, d) => {
+          event.stopPropagation();
+          setSelectedNode(d as EntityNode);
+        });
 
-      // Update edge label positions (at midpoint)
-      edgeLabels.attr("transform", (d: any) => {
-        const midX = (d.source.x + d.target.x) / 2;
-        const midY = (d.source.y + d.target.y) / 2;
-        return `translate(${midX},${midY})`;
+      nodeElements.append("circle")
+        .attr("r", d => d.is_root ? 24 : nodeRadius)
+        .attr("fill", d => getNodeFill(d))
+        .attr("stroke", d => getNodeStroke(d))
+        .attr("stroke-width", d => d.is_root ? 3 : 2)
+        .attr("filter", "url(#glow)");
+
+      nodeElements.append("text")
+        .attr("text-anchor", "middle")
+        .attr("dy", "0.35em")
+        .attr("fill", "white")
+        .attr("font-size", d => d.is_root ? "12px" : "10px")
+        .attr("font-weight", d => d.is_root ? "bold" : "normal")
+        .attr("pointer-events", "none")
+        .text(d => {
+          if (d.is_root) return "A";
+          if (d.is_boilerplate || d.type === "boilerplate") return "?";
+          if (d.type === "company") return "B";
+          if (d.type === "individual") return "P";
+          return "?";
+        });
+
+      nodeElements.append("text")
+        .attr("text-anchor", "middle")
+        .attr("y", d => (d.is_root ? 24 : nodeRadius) + 12)
+        .attr("fill", "#fafafa")
+        .attr("font-size", "9px")
+        .attr("pointer-events", "none")
+        .text(d => {
+          const name = d.name || d.id;
+          return name.length > 14 ? name.slice(0, 14) + "..." : name;
+        });
+
+      // Update tick
+      simulation.on("tick", () => {
+        g.select(".edges").selectAll("line")
+          .attr("x1", (d: any) => d.source.x)
+          .attr("y1", (d: any) => d.source.y)
+          .attr("x2", (d: any) => d.target.x)
+          .attr("y2", (d: any) => d.target.y);
+
+        g.select(".edge-labels").selectAll("g").attr("transform", (d: any) => {
+          const midX = (d.source.x + d.target.x) / 2;
+          const midY = (d.source.y + d.target.y) / 2;
+          return `translate(${midX},${midY})`;
+        });
+
+        nodeElements.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
       });
 
-      // Update node positions
-      nodeElements.attr("transform", (d: any) => `translate(${d.x},${d.y})`);
-    });
+      // Gentle restart for new nodes
+      simulation.alpha(0.3).restart();
+    }
 
-    // Run simulation longer for better layout
-    simulation.alpha(1).restart();
-    
-    // Let it run for 5 seconds then cool down
-    setTimeout(() => {
-      simulation.alphaTarget(0);
-    }, 5000);
-
-    // Initial zoom to fit
-    svg.call(zoom.transform, d3.zoomIdentity.translate(0, 0).scale(0.8));
-
-    // Cleanup
     return () => {
-      simulation.stop();
+      // Don't stop simulation on cleanup - let it continue
     };
 
-  }, [nodes, validEdges, width, height]);
+  }, [structureKey, width, height]); // Only run when structure changes
 
   return (
     <div className="relative">
@@ -453,32 +746,171 @@ export default function OwnershipGraph({
         </div>
       </div>
 
-      {/* Selected Node Info */}
+      {/* Selected Node Info - Detailed Panel */}
       {selectedNode && (
-        <div className="absolute top-2 right-2 bg-[#111111]/95 backdrop-blur p-3 rounded border border-[#1f1f1f] w-56 max-h-[200px] overflow-y-auto text-sm">
-          <h4 className="font-semibold mb-1 break-words text-[#fafafa]">{selectedNode.name}</h4>
-          <p className="text-xs text-muted-foreground">
-            Type: <span className="capitalize">{selectedNode.type}</span>
-          </p>
-          {selectedNode.jurisdiction && (
-            <p className="text-xs text-muted-foreground break-words">
-              Jurisdiction: {selectedNode.jurisdiction}
-            </p>
-          )}
-          {selectedNode.red_flags && selectedNode.red_flags.length > 0 && (
-            <div className="mt-1">
-              <p className="text-xs text-[#ff3366] font-medium">Red Flags:</p>
-              {selectedNode.red_flags.map((flag, i) => (
-                <p key={i} className="text-[10px] text-muted-foreground break-words">- {flag}</p>
-              ))}
+        <div className="absolute top-2 right-2 bg-[#111111]/95 backdrop-blur p-3 rounded border border-[#1f1f1f] w-72 max-h-[350px] overflow-y-auto text-sm">
+          {/* Header */}
+          <div className="flex items-start justify-between mb-2">
+            <h4 className="font-semibold break-words text-[#fafafa] flex-1 pr-2">{selectedNode.name}</h4>
+            <button
+              onClick={() => setSelectedNode(null)}
+              className="text-[10px] text-[#666] hover:text-[#00d4ff] flex-shrink-0"
+            >
+              X
+            </button>
+          </div>
+
+          {/* Data Source Badge */}
+          <div className="flex items-center gap-2 mb-2 flex-wrap">
+            <span className={`text-[10px] px-2 py-0.5 rounded ${
+              selectedNode.api_source === 'mock_demo' ? 'bg-[#666] text-white' :
+              selectedNode.api_source === 'opencorporates' ? 'bg-[#22c55e] text-white' :
+              selectedNode.api_source === 'sec_edgar' ? 'bg-[#3b82f6] text-white' :
+              selectedNode.api_source === 'uk_companies_house' ? 'bg-[#8b5cf6] text-white' :
+              selectedNode.api_source === 'gleif' ? 'bg-[#f97316] text-white' :
+              'bg-[#444] text-white'
+            }`}>
+              {selectedNode.api_source || 'Unknown Source'}
+            </span>
+            {selectedNode.is_mock && (
+              <span className="text-[10px] px-2 py-0.5 rounded bg-[#444] text-[#888]">Demo Data</span>
+            )}
+            {selectedNode.is_root && (
+              <span className="text-[10px] px-2 py-0.5 rounded bg-[#10b981] text-white">Audited</span>
+            )}
+          </div>
+
+          {/* Basic Info */}
+          <div className="space-y-1 text-xs border-t border-[#1f1f1f] pt-2">
+            <div className="flex justify-between">
+              <span className="text-muted-foreground">Type:</span>
+              <span className="capitalize text-[#fafafa]">{selectedNode.type}</span>
+            </div>
+            {selectedNode.jurisdiction && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Jurisdiction:</span>
+                <span className="text-[#fafafa]">{selectedNode.jurisdiction}</span>
+              </div>
+            )}
+            {selectedNode.status && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Status:</span>
+                <span className={`${selectedNode.status === 'active' ? 'text-[#22c55e]' : 'text-[#ff6b35]'}`}>
+                  {selectedNode.status}
+                </span>
+              </div>
+            )}
+            {selectedNode.registration_number && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Reg. No:</span>
+                <span className="text-[#fafafa] font-mono text-[10px]">{selectedNode.registration_number}</span>
+              </div>
+            )}
+            {selectedNode.registration_date && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Reg. Date:</span>
+                <span className="text-[#fafafa]">{selectedNode.registration_date}</span>
+              </div>
+            )}
+            {selectedNode.lei && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">LEI:</span>
+                <span className="text-[#fafafa] font-mono text-[10px]">{selectedNode.lei.slice(0, 10)}...</span>
+              </div>
+            )}
+            {selectedNode.ticker && (
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Ticker:</span>
+                <span className="text-[#00d4ff] font-bold">{selectedNode.ticker}</span>
+              </div>
+            )}
+          </div>
+
+          {/* Gemini Classification */}
+          {selectedNode.gemini_classification && (
+            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+              <div className="text-[10px] text-muted-foreground mb-1">AI Classification:</div>
+              <div className="text-xs text-[#a855f7] capitalize">{selectedNode.gemini_classification.replace(/_/g, ' ')}</div>
+              {selectedNode.data_quality_score !== undefined && (
+                <div className="flex items-center gap-2 mt-1">
+                  <span className="text-[10px] text-muted-foreground">Data Quality:</span>
+                  <div className="flex-1 bg-[#1f1f1f] rounded-full h-1.5">
+                    <div 
+                      className="bg-[#00d4ff] h-1.5 rounded-full" 
+                      style={{ width: `${selectedNode.data_quality_score * 100}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-[#fafafa]">{Math.round(selectedNode.data_quality_score * 100)}%</span>
+                </div>
+              )}
             </div>
           )}
-          <button
-            onClick={() => setSelectedNode(null)}
-            className="mt-2 text-[10px] text-[#00d4ff] hover:underline"
-          >
-            Close
-          </button>
+
+          {/* Red Flags */}
+          {selectedNode.red_flags && selectedNode.red_flags.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+              <div className="text-[10px] text-[#ff3366] font-medium mb-1">
+                Red Flags ({selectedNode.red_flags.length}):
+              </div>
+              <div className="space-y-1">
+                {selectedNode.red_flags.map((flag, i) => (
+                  <div key={i} className="text-[10px] text-muted-foreground bg-[#1a0a0a] p-1.5 rounded border border-[#ff3366]/20">
+                    {flag}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Registered Address */}
+          {selectedNode.registered_address && (
+            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+              <div className="text-[10px] text-muted-foreground mb-1">Registered Address:</div>
+              <div className="text-[10px] text-[#fafafa]">{selectedNode.registered_address}</div>
+            </div>
+          )}
+
+          {/* Directors */}
+          {selectedNode.directors && selectedNode.directors.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+              <div className="text-[10px] text-muted-foreground mb-1">
+                Directors ({selectedNode.directors.length}):
+              </div>
+              <div className="space-y-1">
+                {selectedNode.directors.slice(0, 3).map((dir: any, i: number) => (
+                  <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
+                    <span>{dir.name}</span>
+                    {dir.role && <span className="text-muted-foreground">{dir.role}</span>}
+                  </div>
+                ))}
+                {selectedNode.directors.length > 3 && (
+                  <div className="text-[10px] text-muted-foreground">+{selectedNode.directors.length - 3} more</div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* Beneficial Owners */}
+          {selectedNode.beneficial_owners && selectedNode.beneficial_owners.length > 0 && (
+            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+              <div className="text-[10px] text-muted-foreground mb-1">
+                Beneficial Owners ({selectedNode.beneficial_owners.length}):
+              </div>
+              <div className="space-y-1">
+                {selectedNode.beneficial_owners.slice(0, 3).map((owner: any, i: number) => (
+                  <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
+                    <span>{owner.name}</span>
+                    {owner.ownership_percentage && (
+                      <span className="text-[#00d4ff]">{owner.ownership_percentage}%</span>
+                    )}
+                  </div>
+                ))}
+                {selectedNode.beneficial_owners.length > 3 && (
+                  <div className="text-[10px] text-muted-foreground">+{selectedNode.beneficial_owners.length - 3} more</div>
+                )}
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

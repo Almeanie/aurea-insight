@@ -299,15 +299,34 @@ class BeneficialOwnershipDiscovery:
                     else:
                         report_progress(f"Found: {entity_name} (via {source})", pct, {"source": source})
                     
-                    # Stream the node to frontend
+                    # Stream the node to frontend with full entity data
                     node_data = {
                         "id": entity_data.get("entity_id", entity_name),
-                        "name": entity_data.get("name", entity_name),
+                        "name": entity_data.get("name", entity_name) or entity_data.get("company_name", entity_name),
                         "type": entity_data.get("entity_type", "company"),
                         "jurisdiction": entity_data.get("jurisdiction"),
                         "is_boilerplate": is_boilerplate,
                         "api_source": source,
-                        "red_flags": entity_data.get("red_flags", [])
+                        "api_sources": entity_data.get("api_sources", []),
+                        "red_flags": entity_data.get("red_flags", []),
+                        # Registrar data
+                        "registration_number": entity_data.get("registration_number"),
+                        "registration_date": entity_data.get("registration_date"),
+                        "status": entity_data.get("status"),
+                        "registered_address": entity_data.get("registered_address"),
+                        # Ownership data
+                        "beneficial_owners": entity_data.get("beneficial_owners", []),
+                        "directors": entity_data.get("directors", []),
+                        "parent_companies": entity_data.get("parent_companies", []),
+                        # Financial identifiers
+                        "lei": entity_data.get("lei"),
+                        "ticker": entity_data.get("ticker"),
+                        # AI classification
+                        "gemini_classification": entity_data.get("gemini_classification"),
+                        "gemini_risk_level": entity_data.get("gemini_risk_level"),
+                        "data_quality_score": entity_data.get("data_quality_score"),
+                        # Flags
+                        "is_mock": entity_data.get("is_mock_data", False),
                     }
                     stream_data("node", node_data)
                     
