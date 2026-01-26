@@ -303,8 +303,12 @@ export default function CompanyPage({ params }: PageProps) {
           }
         };
         
-        eventSource.onerror = () => {
-          console.error("SSE connection error");
+        eventSource.onerror = (event) => {
+          // SSE errors are normal when connection closes - don't treat as critical error
+          // Only log if we're still expecting data (isAuditing is true)
+          if (isAuditing) {
+            console.warn("SSE connection closed");
+          }
           eventSource?.close();
         };
         
@@ -568,6 +572,10 @@ export default function CompanyPage({ params }: PageProps) {
         };
         
         eventSource.onerror = () => {
+          // SSE errors are normal when connection closes - don't treat as critical
+          if (isDiscoveringOwnership) {
+            console.warn("Ownership SSE connection closed");
+          }
           eventSource?.close();
         };
 
