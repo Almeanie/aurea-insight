@@ -11,6 +11,12 @@ interface EntityNode {
   red_flags?: string[];
   is_boilerplate?: boolean;
   is_root?: boolean;
+  // Layout properties (assigned during rendering)
+  x?: number;
+  y?: number;
+  fx?: number | null;
+  fy?: number | null;
+  depth?: number;
 }
 
 interface OwnershipEdge {
@@ -67,6 +73,55 @@ function getEdgeColor(edge: OwnershipEdge): string {
   return RELATIONSHIP_COLORS[rel] || RELATIONSHIP_COLORS["related"];
 }
 
+// Compute hierarchical depth for each node (BFS from root)
+function computeNodeDepths(nodes: EntityNode[], edges: OwnershipEdge[]): Map<string, number> {
+  const depths = new Map<string, number>();
+  const adjacency = new Map<string, string[]>();
+  
+  // Build adjacency list (undirected for depth calculation)
+  for (const edge of edges) {
+    const source = typeof edge.source === 'object' ? (edge.source as any).id : edge.source;
+    const target = typeof edge.target === 'object' ? (edge.target as any).id : edge.target;
+    
+    if (!adjacency.has(source)) adjacency.set(source, []);
+    if (!adjacency.has(target)) adjacency.set(target, []);
+    adjacency.get(source)!.push(target);
+    adjacency.get(target)!.push(source);
+  }
+  
+  // Find root node
+  const rootNode = nodes.find(n => n.is_root);
+  const startId = rootNode?.id || nodes[0]?.id;
+  
+  if (!startId) return depths;
+  
+  // BFS to compute depths
+  const queue: string[] = [startId];
+  depths.set(startId, 0);
+  
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const currentDepth = depths.get(current) || 0;
+    const neighbors = adjacency.get(current) || [];
+    
+    for (const neighbor of neighbors) {
+      if (!depths.has(neighbor)) {
+        depths.set(neighbor, currentDepth + 1);
+        queue.push(neighbor);
+      }
+    }
+  }
+  
+  // Handle disconnected nodes
+  for (const node of nodes) {
+    if (!depths.has(node.id)) {
+      depths.set(node.id, 3); // Put disconnected nodes at outer ring
+    }
+  }
+  
+  return depths;
+}
+
 export default function OwnershipGraph({ 
   nodes, 
   edges, 
@@ -104,15 +159,65 @@ export default function OwnershipGraph({
 
     svg.call(zoom);
 
-    // Create force simulation with validated edges
+    // Compute depths for hierarchical layout
+    const nodeDepths = computeNodeDepths(nodes, validEdges);
+    const centerX = width / 2;
+    const centerY = height / 2;
+    
+    // Group nodes by depth
+    const nodesByDepth = new Map<number, EntityNode[]>();
+    for (const node of nodes) {
+      const depth = nodeDepths.get(node.id) || 0;
+      node.depth = depth;
+      if (!nodesByDepth.has(depth)) nodesByDepth.set(depth, []);
+      nodesByDepth.get(depth)!.push(node);
+    }
+    
+    // Calculate radial positions for hierarchical layout
+    const maxDepth = Math.max(...Array.from(nodesByDepth.keys()), 1);
+    const radiusStep = Math.min(width, height) / (2 * (maxDepth + 1.5));
+    
+    for (const [depth, depthNodes] of nodesByDepth) {
+      const radius = depth === 0 ? 0 : depth * radiusStep + radiusStep * 0.5;
+      const angleStep = (2 * Math.PI) / depthNodes.length;
+      const startAngle = -Math.PI / 2; // Start from top
+      
+      depthNodes.forEach((node, i) => {
+        if (depth === 0) {
+          // Root at center
+          node.x = centerX;
+          node.y = centerY;
+        } else {
+          // Spread nodes in a ring with some offset to avoid overlaps
+          const angle = startAngle + i * angleStep + (depth % 2) * (angleStep / 2);
+          node.x = centerX + radius * Math.cos(angle);
+          node.y = centerY + radius * Math.sin(angle);
+        }
+      });
+    }
+
+    // Create force simulation that preserves hierarchical structure
+    // Use weak forces to prevent overlap while maintaining radial layout
     const simulation = d3.forceSimulation(nodes as d3.SimulationNodeDatum[])
       .force("link", d3.forceLink(validEdges)
         .id((d: any) => d.id)
-        .distance(180)
+        .distance((d: any) => {
+          const sourceDepth = nodeDepths.get(typeof d.source === 'object' ? d.source.id : d.source) || 0;
+          const targetDepth = nodeDepths.get(typeof d.target === 'object' ? d.target.id : d.target) || 0;
+          // Shorter links for same-depth nodes, longer for cross-depth
+          return Math.abs(sourceDepth - targetDepth) <= 1 ? radiusStep * 0.8 : radiusStep * 1.2;
+        })
+        .strength(0.3) // Weak link force to maintain hierarchy
       )
-      .force("charge", d3.forceManyBody().strength(-600))
-      .force("center", d3.forceCenter(width / 2, height / 2))
-      .force("collision", d3.forceCollide().radius(70));
+      .force("charge", d3.forceManyBody().strength(-200)) // Weaker repulsion
+      .force("collision", d3.forceCollide().radius(45))
+      // Radial force to keep nodes at their depth rings
+      .force("radial", d3.forceRadial(
+        (d: any) => (d.depth || 0) * radiusStep + (d.depth === 0 ? 0 : radiusStep * 0.5),
+        centerX,
+        centerY
+      ).strength(0.8))
+      .alphaDecay(0.02); // Slower decay for smoother layout
 
     // Create gradient definitions
     const defs = svg.append("defs");
@@ -161,24 +266,37 @@ export default function OwnershipGraph({
         .attr("fill", color);
     });
 
-    // Draw edges with arrows
+    // Draw edges with curved paths for cleaner hierarchical look
     const link = g.append("g")
       .attr("class", "links")
-      .selectAll("line")
+      .selectAll("path")
       .data(validEdges)
       .enter()
-      .append("line")
+      .append("path")
       .attr("class", (d) => d.is_circular ? "circular-edge" : "")
       .attr("stroke", (d) => getEdgeColor(d))
-      .attr("stroke-width", (d) => d.is_circular ? 3 : 2)
-      .attr("stroke-opacity", 0.8)
+      .attr("stroke-width", (d) => d.is_circular ? 3 : 1.5)
+      .attr("stroke-opacity", 0.7)
       .attr("stroke-dasharray", (d) => d.is_circular ? "5,5" : "none")
+      .attr("fill", "none")
       .attr("marker-end", (d) => {
         const rel = d.relationship?.toLowerCase() || "related";
         if (d.is_circular) return "url(#arrowhead-circular)";
         if (RELATIONSHIP_COLORS[rel]) return `url(#arrowhead-${rel})`;
         return "url(#arrowhead)";
       });
+    
+    // Function to create curved path between two points
+    function createCurvedPath(source: any, target: any): string {
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const dr = Math.sqrt(dx * dx + dy * dy) * 0.5; // Curve radius
+      
+      // Determine curve direction based on relative positions
+      const sweep = source.x < target.x ? 0 : 1;
+      
+      return `M${source.x},${source.y} A${dr},${dr} 0 0,${sweep} ${target.x},${target.y}`;
+    }
 
     // Draw edge label backgrounds
     const linkLabelBgs = g.append("g")
@@ -269,13 +387,10 @@ export default function OwnershipGraph({
 
     // Update positions on tick
     simulation.on("tick", () => {
-      link
-        .attr("x1", (d: any) => d.source.x)
-        .attr("y1", (d: any) => d.source.y)
-        .attr("x2", (d: any) => d.target.x)
-        .attr("y2", (d: any) => d.target.y);
+      // Update curved paths
+      link.attr("d", (d: any) => createCurvedPath(d.source, d.target));
 
-      // Position label backgrounds
+      // Position label backgrounds at midpoint of curve
       linkLabelBgs
         .attr("x", (d: any) => {
           const label = formatRelationshipLabel(d);
