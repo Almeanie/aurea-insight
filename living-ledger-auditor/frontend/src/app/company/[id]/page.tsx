@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useRef } from "react";
+import { use, useState, useEffect, useRef, useMemo } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -709,18 +709,54 @@ export default function CompanyPage({ params }: PageProps) {
   // Get base findings - prefer final results if available
   const baseFindingsList = auditResults?.findings?.findings || [];
   
-  // Merge: use streaming finding if it exists (has ai_explanation), otherwise use base
-  const findings = baseFindingsList.length > 0
-    ? baseFindingsList.map((f: any) => streamingFindingsMap.get(f.finding_id) || f)
-    : streamingFindings;
+  // Merge: ALWAYS prefer the version with ai_explanation
+  // First try streaming (which has enhanced findings), then base, pick the one with ai_explanation
+  const findings = useMemo(() => {
+    if (baseFindingsList.length === 0 && streamingFindings.length === 0) {
+      return [];
+    }
+    
+    // Combine all findings by ID, preferring the one with ai_explanation
+    const allFindingsMap = new Map<string, any>();
+    
+    // Add base findings first
+    for (const f of baseFindingsList) {
+      allFindingsMap.set(f.finding_id, f);
+    }
+    
+    // Override with streaming findings ONLY if they have ai_explanation
+    // This ensures enhanced findings take priority
+    for (const f of streamingFindings) {
+      const existing = allFindingsMap.get(f.finding_id);
+      // Prefer the version with ai_explanation
+      if (!existing || f.ai_explanation) {
+        allFindingsMap.set(f.finding_id, f);
+      }
+    }
+    
+    return Array.from(allFindingsMap.values());
+  }, [baseFindingsList, streamingFindings]);
   // Merge streaming AJEs with final results
-  const streamingAjesMap = new Map(
-    streamingAjes.map(a => [a.aje_id, a])
-  );
   const baseAjesList = auditResults?.ajes?.ajes || [];
-  const ajes = baseAjesList.length > 0
-    ? baseAjesList.map((a: any) => streamingAjesMap.get(a.aje_id) || a)
-    : streamingAjes;
+  const ajes = useMemo(() => {
+    if (baseAjesList.length === 0 && streamingAjes.length === 0) {
+      return [];
+    }
+    
+    const allAjesMap = new Map<string, any>();
+    
+    // Add base AJEs first
+    for (const a of baseAjesList) {
+      allAjesMap.set(a.aje_id, a);
+    }
+    
+    // Override with streaming AJEs
+    for (const a of streamingAjes) {
+      allAjesMap.set(a.aje_id, a);
+    }
+    
+    return Array.from(allAjesMap.values());
+  }, [baseAjesList, streamingAjes]);
   const trail = auditTrail?.audit_trail;
   const reasoningChain = trail?.reasoning_chain || [];
   const geminiInteractions = trail?.gemini_interactions || [];
