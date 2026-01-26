@@ -683,34 +683,14 @@ export default function CompanyPage({ params }: PageProps) {
     window.open(`http://localhost:8000/api/export/${id}/pdf?audit_id=${currentAuditId}`, "_blank");
   };
 
-  if (isLoading) {
-    return (
-      <div className="min-h-screen bg-[#0a0a0a] p-6">
-        <Skeleton className="h-8 w-48 mb-4" />
-        <Skeleton className="h-4 w-32 mb-8" />
-        <div className="grid md:grid-cols-3 gap-6">
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-          <Skeleton className="h-32" />
-        </div>
-      </div>
-    );
-  }
-
+  // === MEMOIZED DATA MERGES (must be before any early returns for hooks rules) ===
   // Use streaming data while audit is running, fall back to final results when complete
-  // Merge streaming findings with final results to preserve AI explanations
   const riskScore = streamingRiskScore || auditResults?.riskScore;
-  
-  // Build a map from streaming findings (which have ai_explanation)
-  const streamingFindingsMap = new Map(
-    streamingFindings.map(f => [f.finding_id, f])
-  );
   
   // Get base findings - prefer final results if available
   const baseFindingsList = auditResults?.findings?.findings || [];
   
   // Merge: ALWAYS prefer the version with ai_explanation
-  // First try streaming (which has enhanced findings), then base, pick the one with ai_explanation
   const findings = useMemo(() => {
     if (baseFindingsList.length === 0 && streamingFindings.length === 0) {
       return [];
@@ -725,10 +705,8 @@ export default function CompanyPage({ params }: PageProps) {
     }
     
     // Override with streaming findings ONLY if they have ai_explanation
-    // This ensures enhanced findings take priority
     for (const f of streamingFindings) {
       const existing = allFindingsMap.get(f.finding_id);
-      // Prefer the version with ai_explanation
       if (!existing || f.ai_explanation) {
         allFindingsMap.set(f.finding_id, f);
       }
@@ -736,6 +714,7 @@ export default function CompanyPage({ params }: PageProps) {
     
     return Array.from(allFindingsMap.values());
   }, [baseFindingsList, streamingFindings]);
+
   // Merge streaming AJEs with final results
   const baseAjesList = auditResults?.ajes?.ajes || [];
   const ajes = useMemo(() => {
@@ -757,6 +736,21 @@ export default function CompanyPage({ params }: PageProps) {
     
     return Array.from(allAjesMap.values());
   }, [baseAjesList, streamingAjes]);
+
+  // === EARLY RETURNS (after all hooks) ===
+  if (isLoading) {
+    return (
+      <div className="min-h-screen bg-[#0a0a0a] p-6">
+        <Skeleton className="h-8 w-48 mb-4" />
+        <Skeleton className="h-4 w-32 mb-8" />
+        <div className="grid md:grid-cols-3 gap-6">
+          <Skeleton className="h-32" />
+          <Skeleton className="h-32" />
+          <Skeleton className="h-32" />
+        </div>
+      </div>
+    );
+  }
   const trail = auditTrail?.audit_trail;
   const reasoningChain = trail?.reasoning_chain || [];
   const geminiInteractions = trail?.gemini_interactions || [];
