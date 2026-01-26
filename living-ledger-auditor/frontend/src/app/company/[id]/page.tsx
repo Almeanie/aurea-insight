@@ -685,13 +685,29 @@ export default function CompanyPage({ params }: PageProps) {
   }
 
   // Use streaming data while audit is running, fall back to final results when complete
+  // Merge streaming findings with final results to preserve AI explanations
   const riskScore = streamingRiskScore || auditResults?.riskScore;
-  const findings = isAuditing && streamingFindings.length > 0 
-    ? streamingFindings 
-    : (auditResults?.findings?.findings || streamingFindings);
-  const ajes = isAuditing && streamingAjes.length > 0 
-    ? streamingAjes 
-    : (auditResults?.ajes?.ajes || streamingAjes);
+  
+  // Build a map from streaming findings (which have ai_explanation)
+  const streamingFindingsMap = new Map(
+    streamingFindings.map(f => [f.finding_id, f])
+  );
+  
+  // Get base findings - prefer final results if available
+  const baseFindingsList = auditResults?.findings?.findings || [];
+  
+  // Merge: use streaming finding if it exists (has ai_explanation), otherwise use base
+  const findings = baseFindingsList.length > 0
+    ? baseFindingsList.map((f: any) => streamingFindingsMap.get(f.finding_id) || f)
+    : streamingFindings;
+  // Merge streaming AJEs with final results
+  const streamingAjesMap = new Map(
+    streamingAjes.map(a => [a.aje_id, a])
+  );
+  const baseAjesList = auditResults?.ajes?.ajes || [];
+  const ajes = baseAjesList.length > 0
+    ? baseAjesList.map((a: any) => streamingAjesMap.get(a.aje_id) || a)
+    : streamingAjes;
   const trail = auditTrail?.audit_trail;
   const reasoningChain = trail?.reasoning_chain || [];
   const geminiInteractions = trail?.gemini_interactions || [];
