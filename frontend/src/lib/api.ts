@@ -1,5 +1,5 @@
 /**
- * API Client for Living Ledger Auditor
+ * API Client for Aurea Insight
  */
 
 const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";

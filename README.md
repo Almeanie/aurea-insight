@@ -4,7 +4,7 @@ AI-Powered Financial Audit Platform - Built for the Gemini 3 Hackathon 2026
 
 ## Overview
 
-Aurea Insight (Living Ledger Auditor) is a comprehensive AI audit platform that leverages Google's Gemini 3 to revolutionize financial auditing. The platform provides intelligent analysis, fraud detection, and regulatory compliance verification for financial data.
+Aurea Insight is a comprehensive AI audit platform that leverages Google's Gemini 3 to revolutionize financial auditing. The platform provides intelligent analysis, fraud detection, and regulatory compliance verification for financial data.
 
 ### Key Capabilities
 

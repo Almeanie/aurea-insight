@@ -1,5 +1,5 @@
 """
-Living Ledger Auditor - Configuration
+Aurea Insight - Configuration
 """
 from pydantic_settings import BaseSettings
 from typing import Optional
@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
     
     # Application
-    APP_NAME: str = "Living Ledger Auditor"
+    APP_NAME: str = "Aurea Insight"
     APP_VERSION: str = "1.0.0"
     DEBUG: bool = True
     

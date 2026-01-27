@@ -176,7 +176,7 @@ export default function Home() {
         <div className="container mx-auto px-6 h-14 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Shield className="h-6 w-6 text-[#00d4ff]" />
-            <span className="font-semibold text-lg tracking-tight">Living Ledger Auditor</span>
+            <span className="font-semibold text-lg tracking-tight">Aurea Insight</span>
           </div>
           <div className="flex items-center gap-4">
             <Badge variant="outline" className="text-[#00d4ff] border-[#00d4ff]/30">
@@ -469,7 +469,7 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-[#1f1f1f] mt-16 py-8">
         <div className="container mx-auto px-6 text-center text-sm text-muted-foreground">
-          <p>Living Ledger Auditor - Hackathon Demo</p>
+          <p>Aurea Insight - Hackathon Demo</p>
           <p className="mt-1">This is a demonstration. Not for production use. Human judgment required.</p>
         </div>
       </footer>

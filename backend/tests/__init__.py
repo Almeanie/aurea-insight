@@ -1,1 +1,1 @@
-"""Test suite for Living Ledger Auditor."""
+"""Test suite for Aurea Insight."""

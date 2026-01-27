@@ -1,4 +1,4 @@
-"""Core modules for Living Ledger Auditor."""
+"""Core modules for Aurea Insight."""
 # Lazy imports to avoid circular dependencies during testing
 # Import specific modules as needed:
 #   from core.gemini_client import GeminiClient

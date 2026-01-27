@@ -1,4 +1,4 @@
-# Example Data for Living Ledger Auditor
+# Example Data for Aurea Insight
 
 This folder contains realistic financial data for testing the audit functionality.
 

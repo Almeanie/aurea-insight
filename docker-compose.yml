@@ -7,7 +7,7 @@ services:
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: living_ledger
+      POSTGRES_DB: aurea_insight
     ports:
       - "5432:5432"
     volumes:
@@ -26,7 +26,7 @@ services:
     ports:
       - "8000:8000"
     environment:
-      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/living_ledger
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/aurea_insight
       GEMINI_API_KEY: ${GEMINI_API_KEY}
       DEBUG: "true"
     depends_on:

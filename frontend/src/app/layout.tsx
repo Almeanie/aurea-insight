@@ -13,7 +13,7 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Living Ledger Auditor",
+  title: "Aurea Insight",
   description: "AI-Powered Financial Audit Platform - Powered by Gemini 3",
 };
 

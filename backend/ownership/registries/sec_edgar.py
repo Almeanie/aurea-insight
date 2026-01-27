@@ -24,7 +24,7 @@ class SECEdgarAPI:
     
     # SEC requires proper User-Agent format: Sample Company Name AdminContact@example.com
     # Without this, requests will be blocked
-    USER_AGENT = "LivingLedgerAuditor admin@hackathon-demo.com"
+    USER_AGENT = "AureaInsight admin@hackathon-demo.com"
     
     # Cache for company tickers to avoid repeated requests
     _tickers_cache: dict | None = None

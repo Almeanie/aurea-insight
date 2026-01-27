@@ -1,5 +1,5 @@
 """
-Living Ledger Auditor - Main FastAPI Application
+Aurea Insight - Main FastAPI Application
 AI-Powered Financial Audit Platform
 """
 from fastapi import FastAPI

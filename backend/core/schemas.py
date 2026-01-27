@@ -1,5 +1,5 @@
 """
-Pydantic Schemas for Living Ledger Auditor
+Pydantic Schemas for Aurea Insight
 """
 from pydantic import BaseModel, Field
 from typing import Optional, Literal

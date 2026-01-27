@@ -1,1 +1,1 @@
-"""API routes for Living Ledger Auditor."""
+"""API routes for Aurea Insight."""
