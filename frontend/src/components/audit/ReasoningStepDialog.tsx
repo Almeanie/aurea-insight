@@ -320,12 +320,12 @@ export default function ReasoningStepDialog({
               <ArrowRight className="h-4 w-4" />
               Audit Workflow Position
             </h4>
-            <div className="flex items-center gap-1 overflow-x-auto pb-2">
+            <div className="flex items-center gap-1 overflow-x-auto px-1 pb-2">
               {allSteps.map((s, idx) => (
                 <div key={idx} className="flex items-center">
                   <div
                     className={`
-                        shrink-0 w-8 h-8 rounded-full flex items-center justify-center text-xs font-mono
+                        shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-xs font-mono
                         ${idx === stepIndex
                         ? 'ring-2 ring-[#00d4ff] ring-offset-2 ring-offset-[#0a0a0a]'
                         : ''}
