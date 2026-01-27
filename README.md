@@ -70,7 +70,7 @@ Aurea Insight (Living Ledger Auditor) is a comprehensive AI audit platform that 
 ### Backend Setup
 
 ```bash
-cd living-ledger-auditor/backend
+cd backend
 
 # Create virtual environment
 python -m venv venv
@@ -80,21 +80,21 @@ source venv/bin/activate  # Linux/Mac
 # Install dependencies
 pip install -r requirements.txt
 
-# Copy environment file
+# Copy environment file and add your Gemini API key
 copy .env.example .env  # Windows
 cp .env.example .env  # Linux/Mac
 
-# Add your Gemini API key to .env
+# Edit .env and add your Gemini API key:
 # GEMINI_API_KEY=your_key_here
 
 # Run the server
-python main.py
+python -m uvicorn main:app --reload
 ```
 
 ### Frontend Setup
 
 ```bash
-cd living-ledger-auditor/frontend
+cd frontend
 
 # Install dependencies
 npm install
@@ -103,10 +103,10 @@ npm install
 npm run dev
 ```
 
-### Docker Setup
+### Docker Setup (Alternative)
 
 ```bash
-cd living-ledger-auditor
+# From repository root
 docker-compose up --build
 ```
 
@@ -131,23 +131,25 @@ docker-compose up --build
 
 ```
 aurea-insight/
-|-- living-ledger-auditor/
-    |-- frontend/           # Next.js application
-    |   |-- src/
-    |       |-- app/        # App router pages
-    |       |-- components/ # React components
-    |       |-- lib/        # Utilities
-    |
-    |-- backend/            # FastAPI application
-        |-- api/            # API routes
-        |-- core/           # Core modules (Gemini, audit trail)
-        |-- generators/     # Synthetic data generation
-        |-- parsers/        # File parsing
-        |-- audit/          # Audit engine
-        |-- ownership/      # Ownership discovery
-        |-- chatbot/        # Auditor assistant
-        |-- exports/        # PDF/CSV export
-        |-- tests/          # Test suite
+|-- frontend/               # Next.js application
+|   |-- src/
+|       |-- app/            # App router pages
+|       |-- components/     # React components
+|       |-- lib/            # Utilities
+|
+|-- backend/                # FastAPI application
+|   |-- api/                # API routes
+|   |-- core/               # Core modules (Gemini, audit trail)
+|   |-- generators/         # Synthetic data generation
+|   |-- parsers/            # File parsing
+|   |-- audit/              # Audit engine
+|   |-- ownership/          # Ownership discovery
+|   |-- chatbot/            # Auditor assistant
+|   |-- exports/            # PDF/CSV export
+|   |-- tests/              # Test suite
+|
+|-- docker-compose.yml      # Docker orchestration
+|-- README.md               # This file
 ```
 
 ## Known Limitations
