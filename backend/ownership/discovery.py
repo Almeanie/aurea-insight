@@ -15,15 +15,16 @@ import networkx as nx
 from typing import Optional
 import uuid
 import asyncio
+from datetime import datetime
 from loguru import logger
 
 from core.gemini_client import GeminiClient
 from core.schemas import OwnershipGraph, EntityNode, OwnershipEdge
 from ownership.registries import (
-    OpenCorporatesAPI,
+
     SECEdgarAPI,
-    UKCompaniesHouseAPI,
     GLEIFAPI
+
 )
 
 
@@ -108,9 +109,9 @@ class BeneficialOwnershipDiscovery:
         logger.info("[BeneficialOwnershipDiscovery] Initializing with real API clients")
         
         # Initialize real API clients
-        self.opencorporates = OpenCorporatesAPI()
+
         self.sec_edgar = SECEdgarAPI()
-        self.uk_companies_house = UKCompaniesHouseAPI()
+
         self.gleif = GLEIFAPI()
         
         # Gemini for parsing only
@@ -124,17 +125,15 @@ class BeneficialOwnershipDiscovery:
         
         # Track API statuses for reporting
         self.api_status = {
-            "opencorporates": {"available": False, "reason": "Requires paid API key"},
+
             "sec_edgar": {"available": True, "reason": "Free, no key required"},
-            "uk_companies_house": {"available": bool(self.uk_companies_house.api_key), "reason": "Key configured" if self.uk_companies_house.api_key else "No API key"},
             "gleif": {"available": self.gleif.enabled, "reason": "Free, no key required" if self.gleif.enabled else "Disabled in config"}
         }
         
         # Track API call stats
         self.api_stats = {
-            "opencorporates": {"calls": 0, "success": 0, "errors": 0},
+
             "sec_edgar": {"calls": 0, "success": 0, "errors": 0},
-            "uk_companies_house": {"calls": 0, "success": 0, "errors": 0},
             "gleif": {"calls": 0, "success": 0, "errors": 0}
         }
     
@@ -149,10 +148,7 @@ class BeneficialOwnershipDiscovery:
         status = {}
         
         # Check OpenCorporates
-        status["opencorporates"] = {
-            "configured": bool(self.opencorporates.api_key),
-            "note": "Requires paid API subscription" if not self.opencorporates.api_key else "Key configured"
-        }
+
         
         # Check SEC EDGAR - try loading tickers
         try:
@@ -166,11 +162,7 @@ class BeneficialOwnershipDiscovery:
         except Exception as e:
             status["sec_edgar"] = {"configured": True, "working": False, "note": f"Error: {str(e)[:50]}"}
         
-        # Check UK Companies House
-        status["uk_companies_house"] = {
-            "configured": bool(self.uk_companies_house.api_key),
-            "note": "API key configured" if self.uk_companies_house.api_key else "No API key - get one at developer.company-information.service.gov.uk"
-        }
+
         
         # Check GLEIF
         status["gleif"] = {
@@ -195,10 +187,10 @@ class BeneficialOwnershipDiscovery:
         Discover ownership network starting from seed entities.
         
         Uses REAL APIs ONLY in this order:
-        1. OpenCorporates (global coverage)
+
         2. SEC EDGAR (US public companies)
-        3. UK Companies House (UK companies with PSC data)
-        4. GLEIF (LEI relationships)
+        3. GLEIF (LEI relationships)
+        4. Gemini Web Search (Fallback)
         
         If no API returns data, the entity is marked as "unknown" and filtered out.
         
@@ -259,23 +251,24 @@ class BeneficialOwnershipDiscovery:
         total_to_process = len(seed_entities)
         processed_count = 0
         
-        while entities_to_process and current_depth < depth:
-            current_depth += 1
-            next_batch = []
-            
-            logger.info(f"[discover_ownership_network] Processing depth {current_depth}, {len(entities_to_process)} entities")
-            report_progress(f"Depth {current_depth}: Processing {len(entities_to_process)} entities", 10.0 + (current_depth * 30.0))
-            
-            for idx, entity_name in enumerate(entities_to_process):
+        semaphore = asyncio.Semaphore(10)  # Limit concurrent requests
+        
+        async def process_entity(entity_name: str) -> list[str]:
+            """Process a single entity and return found related entities."""
+            async with semaphore:
                 if entity_name in processed_entities:
-                    continue
+                    return []
                 
                 processed_entities.add(entity_name)
+                # processed_count is simple counter, might be slightly off in progress reporting due to concurrency
+                # but acceptable for UI feedback.
+                nonlocal processed_count
                 processed_count += 1
                 
-                # Calculate progress percentage
+                # Calculate progress (approximate)
                 depth_progress = 10.0 + ((current_depth - 1) * 30.0)
-                entity_progress = (idx + 1) / max(len(entities_to_process), 1) * 25.0
+                # Use processed_count for progress
+                entity_progress = (processed_count / max(total_to_process, 1)) * 25.0
                 pct = min(depth_progress + entity_progress, 85.0)
                 
                 report_progress(
@@ -286,6 +279,8 @@ class BeneficialOwnershipDiscovery:
                 
                 # Fetch from real APIs
                 entity_data = await self._lookup_entity_from_apis(entity_name)
+                
+                new_related_entities = []
                 
                 if entity_data:
                     discovered_entities[entity_name] = entity_data
@@ -329,16 +324,21 @@ class BeneficialOwnershipDiscovery:
                     stream_data("node", node_data)
                     
                     # Stream edges for beneficial owners
-                    # First, create stub nodes for owners that haven't been processed
                     for owner in entity_data.get("beneficial_owners", []):
-                        owner_name = owner.get("name", "")
+                        if isinstance(owner, str):
+                            owner_name = owner
+                            owner_pct = None
+                        else:
+                            owner_name = owner.get("name", "")
+                            owner_pct = owner.get("percentage")
+
                         if owner_name and owner_name not in processed_entities:
-                            # Stream stub node for owner BEFORE the edge
+                            # Stream stub node
                             stub_node = {
                                 "id": owner_name,
                                 "name": owner_name,
-                                "type": "individual",  # Owners are typically individuals
-                                "is_stub": True,  # Will be enriched later if processed
+                                "type": "individual",
+                                "is_stub": True,
                             }
                             stream_data("node", stub_node)
                             
@@ -346,31 +346,35 @@ class BeneficialOwnershipDiscovery:
                                 "source": owner_name,
                                 "target": entity_name,
                                 "relationship": "beneficial_owner",
-                                "percentage": owner.get("percentage"),
+                                "percentage": owner_pct,
                             }
                             stream_data("edge", edge_data)
-                            next_batch.append(owner_name)
+                            new_related_entities.append(owner_name)
                         elif owner_name:
-                            # Owner already processed, just stream the edge
                             edge_data = {
                                 "source": owner_name,
                                 "target": entity_name,
                                 "relationship": "beneficial_owner",
-                                "percentage": owner.get("percentage"),
+                                "percentage": owner_pct,
                             }
                             stream_data("edge", edge_data)
                     
                     # Stream edges for parent companies
-                    # First, create stub nodes for parents that haven't been processed
                     for parent in entity_data.get("parent_companies", []):
-                        parent_name = parent.get("name", "")
+                        if isinstance(parent, str):
+                            parent_name = parent
+                            parent_pct = None
+                        else:
+                            parent_name = parent.get("name", "")
+                            parent_pct = parent.get("ownership_percentage")
+
                         if parent_name and parent_name not in processed_entities:
-                            # Stream stub node for parent BEFORE the edge
+                            # Stream stub node
                             stub_node = {
                                 "id": parent_name,
                                 "name": parent_name,
-                                "type": "company",  # Parents are typically companies
-                                "is_stub": True,  # Will be enriched later if processed
+                                "type": "company",
+                                "is_stub": True,
                             }
                             stream_data("node", stub_node)
                             
@@ -378,21 +382,50 @@ class BeneficialOwnershipDiscovery:
                                 "source": parent_name,
                                 "target": entity_name,
                                 "relationship": "parent_company",
-                                "percentage": parent.get("ownership_percentage"),
+                                "percentage": parent_pct,
                             }
                             stream_data("edge", edge_data)
-                            next_batch.append(parent_name)
+                            new_related_entities.append(parent_name)
                         elif parent_name:
-                            # Parent already processed, just stream the edge
                             edge_data = {
                                 "source": parent_name,
                                 "target": entity_name,
                                 "relationship": "parent_company",
-                                "percentage": parent.get("ownership_percentage"),
+                                "percentage": parent_pct,
                             }
                             stream_data("edge", edge_data)
+                
+                return new_related_entities
+
+        while entities_to_process and current_depth < depth:
+            current_depth += 1
+            
+            logger.info(f"[discover_ownership_network] Processing depth {current_depth}, {len(entities_to_process)} entities")
+            report_progress(f"Depth {current_depth}: Processing {len(entities_to_process)} entities", 10.0 + (current_depth * 30.0))
+            
+            # Prepare tasks
+            tasks = []
+            unique_batch = []
+            
+            # Filter duplicates in current batch before creating tasks
+            for entity_name in entities_to_process:
+                if entity_name not in processed_entities and entity_name not in unique_batch:
+                    unique_batch.append(entity_name)
+                    tasks.append(process_entity(entity_name))
+            
+            if not tasks:
+                break
+                
+            # Run concurrently
+            results = await asyncio.gather(*tasks)
+            
+            # Collect next batch
+            next_batch = []
+            for res in results:
+                next_batch.extend(res)
             
             entities_to_process = next_batch
+
         
         # Analyze for fraud patterns
         logger.info("[discover_ownership_network] Analyzing graph for fraud patterns")
@@ -480,43 +513,7 @@ class BeneficialOwnershipDiscovery:
         
         found = False
         
-        # 1. Try OpenCorporates (best global coverage - requires paid API key)
-        if self.opencorporates._has_api_key():
-            try:
-                self.api_stats["opencorporates"]["calls"] += 1
-                oc_results = await self.opencorporates.search_companies(entity_name)
-                if oc_results:
-                    found = True
-                    self.api_stats["opencorporates"]["success"] += 1
-                    best_match = oc_results[0]  # Take top result
-                    normalized = self.opencorporates.normalize_company_data(best_match)
-                    
-                    results.update({
-                        "company_name": normalized.get("company_name") or entity_name,
-                        "jurisdiction": normalized.get("jurisdiction"),
-                        "registration_number": normalized.get("registration_number"),
-                        "registration_date": normalized.get("registration_date"),
-                        "status": normalized.get("status"),
-                        "registered_address": normalized.get("registered_address"),
-                        "opencorporates_url": normalized.get("opencorporates_url"),
-                    })
-                    results["red_flags"].extend(normalized.get("red_flags", []))
-                    results["api_sources"].append("opencorporates")
-                    
-                    # Get officers if we have jurisdiction and company number
-                    jcode = normalized.get("jurisdiction_code")
-                    company_num = normalized.get("registration_number")
-                    if jcode and company_num:
-                        officers = await self.opencorporates.get_officers(jcode, company_num)
-                        owners, directors = self.opencorporates.normalize_officer_data(officers)
-                        results["beneficial_owners"].extend(owners)
-                        results["directors"].extend(directors)
-                    
-                    self.data_sources[entity_name] = "opencorporates"
-                    logger.info(f"[_lookup_entity_from_apis] Found in OpenCorporates: {entity_name}")
-            except Exception as e:
-                self.api_stats["opencorporates"]["errors"] += 1
-                logger.warning(f"[_lookup_entity_from_apis] OpenCorporates error for {entity_name}: {e}")
+
         
         # 2. Try SEC EDGAR (US public companies - free, no key required)
         if not found:
@@ -563,59 +560,7 @@ class BeneficialOwnershipDiscovery:
                 self.api_stats["sec_edgar"]["errors"] += 1
                 logger.warning(f"[_lookup_entity_from_apis] SEC EDGAR error for {entity_name}: {e}")
         
-        # 3. Try UK Companies House (UK companies with PSC - requires free API key)
-        if self.uk_companies_house.api_key:
-            try:
-                self.api_stats["uk_companies_house"]["calls"] += 1
-                uk_results = await self.uk_companies_house.search_companies(entity_name)
-                if uk_results:
-                    self.api_stats["uk_companies_house"]["success"] += 1
-                    best_match = uk_results[0]
-                    company_number = best_match.get("company_number", "")
-                    
-                    if company_number:
-                        # Get detailed company info
-                        company_detail = await self.uk_companies_house.get_company(company_number)
-                        if company_detail:
-                            found = True
-                            normalized = self.uk_companies_house.normalize_company_data(company_detail)
-                            
-                            # Update only if we don't have this data yet
-                            if not results.get("jurisdiction"):
-                                results.update({
-                                    "jurisdiction": normalized.get("jurisdiction"),
-                                    "registration_number": normalized.get("registration_number"),
-                                    "registration_date": normalized.get("registration_date"),
-                                    "status": normalized.get("status"),
-                                    "registered_address": normalized.get("registered_address"),
-                                })
-                            
-                            results["api_sources"].append("uk_companies_house")
-                            
-                            # Get PSC (Persons with Significant Control) - the gold standard for beneficial ownership
-                            pscs = await self.uk_companies_house.get_persons_with_significant_control(company_number)
-                            if pscs:
-                                normalized_pscs = self.uk_companies_house.normalize_psc_data(pscs)
-                                results["beneficial_owners"].extend(normalized_pscs)
-                                logger.info(f"[_lookup_entity_from_apis] Found {len(pscs)} PSC records in UK Companies House")
-                            
-                            # Get officers
-                            officers = await self.uk_companies_house.get_officers(company_number)
-                            for officer in officers:
-                                results["directors"].append({
-                                    "name": officer.get("name", "Unknown"),
-                                    "role": officer.get("officer_role", "Director"),
-                                    "appointed_on": officer.get("appointed_on", ""),
-                                    "api_source": "uk_companies_house"
-                                })
-                            
-                            self.data_sources[entity_name] = "uk_companies_house"
-                            logger.info(f"[_lookup_entity_from_apis] Found in UK Companies House: {entity_name}")
-                else:
-                    logger.debug(f"[_lookup_entity_from_apis] UK Companies House: No match for '{entity_name}'")
-            except Exception as e:
-                self.api_stats["uk_companies_house"]["errors"] += 1
-                logger.warning(f"[_lookup_entity_from_apis] UK Companies House error for {entity_name}: {e}")
+
         
         # 4. Try GLEIF (LEI relationships - free, no key required)
         if self.gleif.enabled:
@@ -669,9 +614,60 @@ class BeneficialOwnershipDiscovery:
                 self.api_stats["gleif"]["errors"] += 1
                 logger.warning(f"[_lookup_entity_from_apis] GLEIF error for {entity_name}: {e}")
         
-        # If nothing found from real APIs, return with unknown source (will be filtered out by frontend)
+        # If nothing found from real APIs, try Gemini Web Search as fallback
         if not found:
-            logger.info(f"[_lookup_entity_from_apis] No API results for: {entity_name} - marking as unknown")
+            logger.info(f"[_lookup_entity_from_apis] No API results for {entity_name} - attempting Gemini Web Search fallback")
+            
+            try:
+                search_results = await self.gemini.search(
+                    query=f"Beneficial ownership and company registration details for {entity_name}",
+                    purpose="entity_discovery_fallback"
+                )
+                
+                if search_results.get("text"):
+                    # Use Gemini to parse the search text into our schema
+                    prompt = f"""
+                    Extract company details from this search result text:
+                    {search_results['text']}
+                    
+                    Return JSON matching this schema:
+                    {{
+                        "company_name": "{entity_name}",
+                        "jurisdiction": "Country or State",
+                        "status": "Active/Inactive/Unknown",
+                        "registration_number": "number or null",
+                        "beneficial_owners": [
+                            {{"name": "Owner Name", "percentage": 25.0, "type": "individual/company"}}
+                        ],
+                        "directors": [],
+                        "parent_companies": [],
+                        "red_flags": ["Any controversy or risk mentioned"],
+                        "notes": "Source of info"
+                    }}
+                    """
+                    
+                    parsed = await self.gemini.generate_json(prompt, purpose="parse_search_results")
+                    if parsed.get("parsed"):
+                        extracted = parsed["parsed"]
+                        # Defensive check: ensure extracted is a dict
+                        if isinstance(extracted, dict):
+                            results.update(extracted)
+                            results["api_sources"].append("gemini_web_search")
+                            results["is_boilerplate"] = False
+                            
+                            # Verify we actually got something useful
+                            if extracted.get("jurisdiction") or extracted.get("beneficial_owners"):
+                                found = True
+                                logger.info(f"[_lookup_entity_from_apis] Found via Web Search: {entity_name}")
+                        else:
+                            logger.warning(f"[_lookup_entity_from_apis] Web search parse result is not a dict: {type(extracted)}")
+                    else:
+                        logger.warning(f"[_lookup_entity_from_apis] Web search parse failed: {parsed.get('error')}")
+            except Exception as e:
+                logger.warning(f"[_lookup_entity_from_apis] Web search fallback failed: {e}")
+
+        if not found:
+            logger.info(f"[_lookup_entity_from_apis] No API or Search results for: {entity_name} - marking as unknown")
             # Return minimal data with unknown source - frontend will filter this out
             return {
                 "company_name": entity_name,
@@ -681,7 +677,7 @@ class BeneficialOwnershipDiscovery:
                 "beneficial_owners": [],
                 "directors": [],
                 "parent_companies": [],
-                "red_flags": ["No data found in any official registry"],
+                "red_flags": ["No data found in any official registry or web search"],
                 "api_sources": ["unknown"],  # Frontend will filter this out
                 "is_boilerplate": False
             }
@@ -689,6 +685,8 @@ class BeneficialOwnershipDiscovery:
         # Use Gemini to classify and enrich the data (NOT generate)
         if results["api_sources"]:
             results = await self._gemini_classify_entity(results)
+            # Auto-enrich missing data using web search to resolve red flags
+            results = await self._enrich_missing_data(results)
         
         return results
     
@@ -745,6 +743,9 @@ Based on this REAL data, provide:
 3. If data is missing, note what COULD be found by examining the SEC filings
 4. Any red flags visible in the ACTUAL data
 
+Today's Date: {datetime.now().strftime('%Y-%m-%d')}
+(Use this date to determine if a date is in the past or future)
+
 ENRICHMENT RULES:
 - If SEC filings are listed, the company is a public company
 - If there are insider transactions, ownership is likely institutional/public
@@ -781,6 +782,14 @@ Return JSON:
             if result.get("parsed"):
                 classification = result["parsed"]
                 
+                # Defensive check: ensure classification is a dict
+                if not isinstance(classification, dict):
+                    logger.warning(f"[_gemini_classify_entity] Classification result is not a dict: {type(classification)}")
+                    entity_data["gemini_classification"] = "unknown"
+                    if isinstance(classification, str):
+                        entity_data["gemini_error"] = f"Invalid format: {classification[:50]}"
+                    return entity_data
+                
                 # Merge classification into entity data
                 entity_data["gemini_classification"] = classification.get("entity_classification", "unknown")
                 entity_data["gemini_risk_level"] = classification.get("risk_level", "medium")
@@ -802,6 +811,148 @@ Return JSON:
             # Don't crash - just skip classification
             entity_data["gemini_classification"] = "error"
             entity_data["gemini_error"] = str(e)[:100]
+        
+        return entity_data
+    
+    async def _enrich_missing_data(self, entity_data: dict) -> dict:
+        """
+        Use Gemini web search to fill missing data and resolve red flags.
+        
+        This method attempts to resolve resolvable red flags by:
+        1. Identifying what data is missing from the red flag text
+        2. Using Gemini web search to find the missing information
+        3. Parsing the search results to extract structured data
+        4. Updating entity data and removing resolved flags
+        
+        Args:
+            entity_data: Entity data with potential red flags
+            
+        Returns:
+            Enriched entity data with resolved flags removed
+        """
+        red_flags = entity_data.get("red_flags", [])
+        if not red_flags:
+            return entity_data
+        
+        company_name = entity_data.get("company_name", "Unknown")
+        is_public = entity_data.get("gemini_classification") == "public_company"
+        
+        resolved_flags = []
+        enrichment_notes = []
+        
+        for flag in red_flags:
+            flag_lower = flag.lower()
+            
+            # Skip flags that are expected for public companies
+            if is_public and "beneficial owner" in flag_lower:
+                # Rephrase to be informational, not a warning
+                if "expected for public" not in flag_lower:
+                    # Update the flag text to be clearer
+                    idx = red_flags.index(flag)
+                    red_flags[idx] = "Missing explicit beneficial owner list in registry data (expected for public entities)"
+                continue
+            
+            # Incomplete jurisdiction - try to find full jurisdiction
+            if "incomplete jurisdiction" in flag_lower or "jurisdiction code" in flag_lower:
+                try:
+                    search_result = await self.gemini.search(
+                        f"{company_name} company headquarters country location registered",
+                        purpose="enrich_jurisdiction"
+                    )
+                    if search_result.get("text"):
+                        # Parse jurisdiction from search result
+                        parse_result = await self.gemini.generate_json(
+                            prompt=f"""Extract the country/jurisdiction from this search result about {company_name}.
+                            
+Search result:
+{search_result['text'][:2000]}
+
+Return JSON: {{"jurisdiction": "Full country name or state/country", "confidence": 0.0-1.0}}
+""",
+                            purpose="parse_jurisdiction"
+                        )
+                        if parse_result.get("parsed") and parse_result["parsed"].get("jurisdiction"):
+                            entity_data["jurisdiction"] = parse_result["parsed"]["jurisdiction"]
+                            resolved_flags.append(flag)
+                            enrichment_notes.append(f"Jurisdiction updated to: {parse_result['parsed']['jurisdiction']}")
+                            logger.info(f"[_enrich_missing_data] Resolved jurisdiction for {company_name}")
+                except Exception as e:
+                    logger.warning(f"[_enrich_missing_data] Failed to enrich jurisdiction: {e}")
+            
+            # Missing director data - try to find directors
+            elif "missing director" in flag_lower and not is_public:
+                try:
+                    search_result = await self.gemini.search(
+                        f"{company_name} company directors officers executives leadership team",
+                        purpose="enrich_directors"
+                    )
+                    if search_result.get("text"):
+                        parse_result = await self.gemini.generate_json(
+                            prompt=f"""Extract director/officer names from this search result about {company_name}.
+                            
+Search result:
+{search_result['text'][:2000]}
+
+Return JSON: {{"directors": [{{"name": "Full Name", "role": "Title/Role"}}], "confidence": 0.0-1.0}}
+Only include people who are clearly identified as directors, executives, or officers.
+""",
+                            purpose="parse_directors"
+                        )
+                        if parse_result.get("parsed") and parse_result["parsed"].get("directors"):
+                            directors = parse_result["parsed"]["directors"]
+                            if directors:
+                                existing = entity_data.get("directors", [])
+                                # Add new directors with web_search source
+                                for d in directors:
+                                    if isinstance(d, dict):
+                                        d["api_source"] = "gemini_web_search"
+                                entity_data["directors"] = existing + directors
+                                resolved_flags.append(flag)
+                                enrichment_notes.append(f"Found {len(directors)} directors via web search")
+                                logger.info(f"[_enrich_missing_data] Found {len(directors)} directors for {company_name}")
+                except Exception as e:
+                    logger.warning(f"[_enrich_missing_data] Failed to enrich directors: {e}")
+            
+            # Missing beneficial owner data (for private companies only)
+            elif "beneficial owner" in flag_lower and not is_public:
+                try:
+                    search_result = await self.gemini.search(
+                        f"{company_name} company owner ownership shareholders investors founders",
+                        purpose="enrich_owners"
+                    )
+                    if search_result.get("text"):
+                        parse_result = await self.gemini.generate_json(
+                            prompt=f"""Extract owner/shareholder information from this search result about {company_name}.
+                            
+Search result:
+{search_result['text'][:2000]}
+
+Return JSON: {{"beneficial_owners": [{{"name": "Name", "type": "individual|company", "ownership_percentage": null or number}}], "confidence": 0.0-1.0}}
+Only include clearly identified owners, shareholders, or major investors.
+""",
+                            purpose="parse_owners"
+                        )
+                        if parse_result.get("parsed") and parse_result["parsed"].get("beneficial_owners"):
+                            owners = parse_result["parsed"]["beneficial_owners"]
+                            if owners:
+                                existing = entity_data.get("beneficial_owners", [])
+                                for o in owners:
+                                    if isinstance(o, dict):
+                                        o["api_source"] = "gemini_web_search"
+                                entity_data["beneficial_owners"] = existing + owners
+                                resolved_flags.append(flag)
+                                enrichment_notes.append(f"Found {len(owners)} owners via web search")
+                                logger.info(f"[_enrich_missing_data] Found {len(owners)} owners for {company_name}")
+                except Exception as e:
+                    logger.warning(f"[_enrich_missing_data] Failed to enrich owners: {e}")
+        
+        # Remove resolved flags
+        entity_data["red_flags"] = [f for f in red_flags if f not in resolved_flags]
+        
+        # Add enrichment notes
+        if enrichment_notes:
+            entity_data["enrichment_notes"] = enrichment_notes
+            entity_data["enriched_via_web_search"] = True
         
         return entity_data
     
@@ -842,54 +993,78 @@ Return JSON:
         
         # Add beneficial owners
         for owner in entity_data.get("beneficial_owners", []):
-            owner_name = owner.get("name", "Unknown")
-            owner_type = owner.get("type", "unknown")
+            if isinstance(owner, str):
+                owner_name = owner
+                owner_type = "unknown"
+                owner_pct = None
+                api_source = "unknown"
+            else:
+                owner_name = owner.get("name", "Unknown")
+                owner_type = owner.get("type", "unknown")
+                owner_pct = owner.get("ownership_percentage")
+                api_source = owner.get("api_source", "unknown")
             
             self.graph.add_node(
                 owner_name,
                 type=owner_type,
-                api_source=owner.get("api_source", "unknown")
+                api_source=api_source
             )
             self.graph.add_edge(
                 owner_name,
                 company_name,
                 relationship="owns",
-                percentage=owner.get("ownership_percentage")
+                percentage=owner_pct
             )
         
         # Add directors
         for director in entity_data.get("directors", []):
-            director_name = director.get("name", "Unknown")
+            if isinstance(director, str):
+                director_name = director
+                director_role = "Director"
+                api_source = "unknown"
+            else:
+                director_name = director.get("name", "Unknown")
+                director_role = director.get("role", "Director")
+                api_source = director.get("api_source", "unknown")
             
             # Don't duplicate if already added as owner
             if not self.graph.has_node(director_name):
                 self.graph.add_node(
                     director_name,
                     type="individual",
-                    api_source=director.get("api_source", "unknown")
+                    api_source=api_source
                 )
             
             self.graph.add_edge(
                 director_name,
                 company_name,
                 relationship="directs",
-                role=director.get("role", "Director")
+                role=director_role
             )
         
         # Add parent companies
         for parent in entity_data.get("parent_companies", []):
-            parent_name = parent.get("name", "Unknown Parent")
+            if isinstance(parent, str):
+                parent_name = parent
+                parent_type = "company"
+                parent_rel_type = "parent"
+                api_source = "unknown"
+            else:
+                parent_name = parent.get("name", "Unknown Parent")
+                parent_type = "company"
+                parent_rel_type = parent.get("relationship_type", "parent")
+                api_source = parent.get("api_source", "unknown")
             
             self.graph.add_node(
                 parent_name,
-                type="company",
-                api_source=parent.get("api_source", "unknown")
+                type=parent_type,
+                api_source=api_source
             )
             self.graph.add_edge(
                 parent_name,
                 company_name,
                 relationship="owns",
-                relationship_type=parent.get("relationship_type", "parent")
+                relationship_type=parent_rel_type
             )
     
     async def _analyze_fraud_patterns(self) -> list[dict]:

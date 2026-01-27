@@ -26,7 +26,7 @@ async def discover_ownership(request: OwnershipDiscoveryRequest):
     Discover beneficial ownership network for given entities.
     
     Data Flow:
-    1. Searches REAL public registries (OpenCorporates, SEC EDGAR, UK Companies House, GLEIF)
+    1. Searches REAL public registries (SEC EDGAR, GLEIF)
     2. Uses Gemini to PARSE and CLASSIFY the fetched data (NOT generate fake data)
     3. Builds ownership graph from real data
     4. Falls back to deterministic mock data only if all APIs return nothing
@@ -190,7 +190,7 @@ async def _run_ownership_discovery_task(company_id: str, company_name: str, vend
         logger.info(f"[_run_ownership_discovery_task] Complete: {response}")
         
     except Exception as e:
-        logger.error(f"[_run_ownership_discovery_task] Error: {str(e)}")
+        logger.exception(f"[_run_ownership_discovery_task] Error: {str(e)}")
         progress_tracker.fail_operation(graph_id, str(e))
 
 

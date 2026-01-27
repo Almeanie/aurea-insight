@@ -368,7 +368,18 @@ IMPORTANT: Return ONLY valid JSON. No markdown, no explanation, just the JSON ob
                 text = text.split("```")[1].split("```")[0]
             
             parsed = json.loads(text.strip())
-            result["parsed"] = parsed
+            
+            # CRITICAL FIX: Ensure parsed result is a dictionary (or list)
+            # Gemini sometimes returns a string literal if it fails to generate an object
+            if not isinstance(parsed, (dict, list)):
+                logger.warning(f"[generate_json] Parsed JSON is not a dict/list (got {type(parsed)}): {parsed}")
+                # If it's a string, it might be the content we want, but we promised a structured object
+                # For safety, we treat this as a parse failure unless the caller can handle it
+                # But since callers expect .get(), we must return None for "parsed" or ensure it's a dict
+                result["error"] = f"Gemini returned unstructured data: {type(parsed).__name__}"
+                result["parsed"] = None
+            else:
+                result["parsed"] = parsed
             
         except json.JSONDecodeError as e:
             result["error"] = f"JSON parse error: {e}"
@@ -451,3 +462,88 @@ Return ONLY the code, no explanation."""
     def clear_interaction_log(self):
         """Clear the interaction log (use with caution)."""
         self.interaction_log = []
+
+    async def search(
+        self,
+        query: str,
+        purpose: str = "web_search"
+    ) -> dict:
+        """
+        Perform a web search using Gemini's Google Search grounding.
+        
+        Args:
+            query: The search query
+            purpose: Audit trail purpose
+            
+        Returns:
+            Dict with text (answer) and sources
+        """
+        logger.info(f"[search] Performing web search for: {query}")
+        
+        if not self.model and not self.client:
+            return {"text": None, "error": "Gemini API not configured"}
+            
+        prompt = f"Please search the web for information about:\n{query}\n\nProvide a comprehensive summary of what you find, focusing on business details, ownership, key personnel, and any controversy or red flags."
+        
+        # Create audit entry
+        timestamp = datetime.utcnow()
+        prompt_hash = hashlib.sha256(prompt.encode()).hexdigest()
+        
+        try:
+            # Wait for rate limit
+            await self.rate_limiter.wait_if_needed()
+            
+            response_text = ""
+            grounding_metadata = None
+            
+            if self.client_type == "google_genai":
+                # New client with search tool
+                tool = self.genai_types.Tool(google_search=self.genai_types.GoogleSearch())
+                
+                response = await asyncio.to_thread(
+                    self.client.models.generate_content,
+                    model=self.model,
+                    contents=prompt,
+                    config=self.genai_types.GenerateContentConfig(
+                        temperature=0.3,
+                        tools=[tool]
+                    )
+                )
+                
+                response_text = response.text
+                if hasattr(response, 'candidates') and response.candidates:
+                    c = response.candidates[0]
+                    if hasattr(c, 'grounding_metadata'):
+                        grounding_metadata = c.grounding_metadata
+                        
+            else:
+                # Legacy client
+                # Note: Tools support in legacy vs new package differs, 
+                # for now simplified to normal generation if tools not easily available
+                # but ideally we use the new client which is preferred.
+                
+                # Try simple generation first for legacy as full tool support is complex to inject dynamically
+                # or requires re-instantiation of model with tools.
+                # Assuming new client is primary.
+                response_text = await self._generate_with_legacy_client(prompt, 0.3, 2048)
+            
+            self.rate_limiter.record_success()
+            
+            audit_entry = self._create_audit_entry(
+                prompt=prompt,
+                response=response_text,
+                purpose=purpose,
+                prompt_hash=prompt_hash,
+                timestamp=timestamp
+            )
+            self.interaction_log.append(audit_entry)
+            
+            return {
+                "text": response_text,
+                "grounding_metadata": grounding_metadata,
+                "error": None
+            }
+            
+        except Exception as e:
+            logger.error(f"[search] Error: {e}")
+            return {"text": None, "error": str(e)}

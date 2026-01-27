@@ -25,7 +25,7 @@ export function ProgressBar({
   variant = "default",
 }: ProgressBarProps) {
   const percentage = Math.min(Math.max((value / max) * 100, 0), 100);
-  
+
   const variantColors = {
     default: "bg-[#00d4ff]",
     audit: "bg-[#8b5cf6]",
@@ -57,7 +57,7 @@ export function ProgressBar({
           </span>
         )}
       </div>
-      
+
       {/* Progress bar */}
       <div className="h-2 bg-[#1f1f1f] rounded-full overflow-hidden">
         <div
@@ -79,8 +79,6 @@ interface AuditProgressProps {
   totalSteps?: number;
   stepName?: string;
   status?: "idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error";
-  onStop?: () => void;
-  onResume?: () => void;
 }
 
 export function AuditProgress({
@@ -90,8 +88,6 @@ export function AuditProgress({
   totalSteps,
   stepName,
   status = "idle",
-  onStop,
-  onResume,
 }: AuditProgressProps) {
   if (status === "idle") {
     return null;
@@ -136,27 +132,8 @@ export function AuditProgress({
           )}
           <span className="font-medium">{statusLabels[status]}</span>
         </div>
-        
-        <div className="flex items-center gap-2">
-          {status === "running" && onStop && (
-            <button
-              onClick={onStop}
-              className="px-3 py-1 text-sm rounded bg-[#ff3366]/20 text-[#ff3366] hover:bg-[#ff3366]/30 transition-colors"
-            >
-              Stop
-            </button>
-          )}
-          {(status === "paused" || status === "quota_exceeded") && onResume && (
-            <button
-              onClick={onResume}
-              className="px-3 py-1 text-sm rounded bg-[#00d4ff]/20 text-[#00d4ff] hover:bg-[#00d4ff]/30 transition-colors"
-            >
-              Resume
-            </button>
-          )}
-        </div>
       </div>
-      
+
       <ProgressBar
         value={progress}
         currentStep={currentStep}
@@ -232,7 +209,7 @@ export function OwnershipProgress({
           )}
           <span className="font-medium">{statusLabels[status]}</span>
         </div>
-        
+
         <div className="flex items-center gap-2">
           {status === "running" && onStop && (
             <button
@@ -252,7 +229,7 @@ export function OwnershipProgress({
           )}
         </div>
       </div>
-      
+
       <ProgressBar
         value={progress}
         currentStep={currentStep}

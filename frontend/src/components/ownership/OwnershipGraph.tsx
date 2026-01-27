@@ -2,6 +2,14 @@
 
 import { useEffect, useRef, useState, useMemo } from "react";
 import * as d3 from "d3";
+import {
+  ZoomOut,
+  Maximize2,
+  Minimize2,
+  Search,
+  Loader2,
+  CheckCircle2
+} from 'lucide-react';
 
 interface EntityNode {
   id: string;
@@ -118,15 +126,15 @@ function pointToSegmentDistance(
   const dx = x2 - x1;
   const dy = y2 - y1;
   const lengthSq = dx * dx + dy * dy;
-  
+
   if (lengthSq === 0) return Math.sqrt((px - x1) ** 2 + (py - y1) ** 2);
-  
+
   let t = ((px - x1) * dx + (py - y1) * dy) / lengthSq;
   t = Math.max(0, Math.min(1, t));
-  
+
   const nearestX = x1 + t * dx;
   const nearestY = y1 + t * dy;
-  
+
   return Math.sqrt((px - nearestX) ** 2 + (py - nearestY) ** 2);
 }
 
@@ -138,14 +146,14 @@ function linesIntersect(
   // Calculate direction vectors
   const d1x = x2 - x1, d1y = y2 - y1;
   const d2x = x4 - x3, d2y = y4 - y3;
-  
+
   // Calculate cross product
   const cross = d1x * d2y - d1y * d2x;
   if (Math.abs(cross) < 0.001) return false; // Parallel lines
-  
+
   const t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / cross;
   const u = ((x3 - x1) * d1y - (y3 - y1) * d1x) / cross;
-  
+
   // Check if intersection is within both segments (excluding endpoints)
   return t > 0.05 && t < 0.95 && u > 0.05 && u < 0.95;
 }
@@ -157,19 +165,19 @@ function getIntersectionPoint(
 ): { x: number; y: number } | null {
   const d1x = x2 - x1, d1y = y2 - y1;
   const d2x = x4 - x3, d2y = y4 - y3;
-  
+
   const cross = d1x * d2y - d1y * d2x;
   if (Math.abs(cross) < 0.001) return null;
-  
+
   const t = ((x3 - x1) * d2y - (y3 - y1) * d2x) / cross;
-  
+
   return { x: x1 + t * d1x, y: y1 + t * d1y };
 }
 
 // Force to reduce edge crossings
 function forceUncrossEdges(links: any[]) {
   let nodes: any[] = [];
-  
+
   function force(alpha: number) {
     // Find all edge crossings and push nodes to reduce them
     for (let i = 0; i < links.length; i++) {
@@ -177,33 +185,33 @@ function forceUncrossEdges(links: any[]) {
       const s1 = link1.source;
       const t1 = link1.target;
       if (!s1?.x || !t1?.x) continue;
-      
+
       for (let j = i + 1; j < links.length; j++) {
         const link2 = links[j];
         const s2 = link2.source;
         const t2 = link2.target;
         if (!s2?.x || !t2?.x) continue;
-        
+
         // Skip if links share a node
         if (s1.id === s2.id || s1.id === t2.id || t1.id === s2.id || t1.id === t2.id) continue;
-        
+
         // Check if edges intersect
         if (linesIntersect(s1.x, s1.y, t1.x, t1.y, s2.x, s2.y, t2.x, t2.y)) {
           // Push nodes apart to uncross
           const intersection = getIntersectionPoint(s1.x, s1.y, t1.x, t1.y, s2.x, s2.y, t2.x, t2.y);
           if (!intersection) continue;
-          
+
           const strength = alpha * 30;
-          
+
           // Move nodes that are not fixed
           for (const node of [s1, t1, s2, t2]) {
             if (node.fx !== null && node.fy !== null) continue;
-            
+
             // Calculate perpendicular push from intersection
             const dx = node.x - intersection.x;
             const dy = node.y - intersection.y;
             const dist = Math.sqrt(dx * dx + dy * dy);
-            
+
             if (dist > 0 && dist < 150) {
               // Push away from intersection
               const pushStrength = strength * (1 - dist / 150);
@@ -215,11 +223,11 @@ function forceUncrossEdges(links: any[]) {
       }
     }
   }
-  
-  force.initialize = function(_nodes: any[]) {
+
+  force.initialize = function (_nodes: any[]) {
     nodes = _nodes;
   };
-  
+
   return force;
 }
 
@@ -233,11 +241,11 @@ function saveNodePositions(nodes: any[], storageKey: string) {
   const positions: Record<string, { x: number; y: number; fx: number | null; fy: number | null }> = {};
   for (const node of nodes) {
     if (node.x !== undefined && node.y !== undefined) {
-      positions[node.id] = { 
-        x: node.x, 
-        y: node.y, 
-        fx: node.fx, 
-        fy: node.fy 
+      positions[node.id] = {
+        x: node.x,
+        y: node.y,
+        fx: node.fx,
+        fy: node.fy
       };
     }
   }
@@ -264,42 +272,42 @@ function loadNodePositions(storageKey: string): Record<string, { x: number; y: n
 // Custom force to push nodes away from edges
 function forceAvoidEdges(links: any[], nodeRadius: number) {
   let nodes: any[] = [];
-  
+
   function force(alpha: number) {
     const minDist = nodeRadius + 40;
-    
+
     for (const node of nodes) {
       if (node.fx !== null && node.fy !== null) continue;
-      
+
       for (const link of links) {
         const source = link.source;
         const target = link.target;
-        
+
         if (!source.x || !target.x) continue;
         if (node.id === source.id || node.id === target.id) continue;
-        
+
         const dist = pointToSegmentDistance(
           node.x, node.y,
           source.x, source.y,
           target.x, target.y
         );
-        
+
         if (dist < minDist && dist > 0) {
           const dx = target.x - source.x;
           const dy = target.y - source.y;
           const lengthSq = dx * dx + dy * dy;
-          
+
           if (lengthSq > 0) {
             let t = ((node.x - source.x) * dx + (node.y - source.y) * dy) / lengthSq;
             t = Math.max(0.1, Math.min(0.9, t));
-            
+
             const nearestX = source.x + t * dx;
             const nearestY = source.y + t * dy;
-            
+
             let pushX = node.x - nearestX;
             let pushY = node.y - nearestY;
             const pushDist = Math.sqrt(pushX * pushX + pushY * pushY);
-            
+
             if (pushDist > 0) {
               const strength = alpha * Math.pow((minDist - dist) / minDist, 2) * 50;
               node.vx += (pushX / pushDist) * strength;
@@ -313,26 +321,26 @@ function forceAvoidEdges(links: any[], nodeRadius: number) {
       }
     }
   }
-  
-  force.initialize = function(_nodes: any[]) {
+
+  force.initialize = function (_nodes: any[]) {
     nodes = _nodes;
   };
-  
+
   return force;
 }
 
 // Force to keep graph compact
 function forceCompact(centerX: number, centerY: number, strength: number) {
   let nodes: any[] = [];
-  
+
   function force(alpha: number) {
     for (const node of nodes) {
       if (node.fx !== null && node.fy !== null) continue;
-      
+
       const dx = centerX - node.x;
       const dy = centerY - node.y;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      
+
       if (dist > 100) {
         const pull = alpha * strength * Math.min(dist / 500, 1);
         node.vx += dx * pull;
@@ -340,18 +348,18 @@ function forceCompact(centerX: number, centerY: number, strength: number) {
       }
     }
   }
-  
-  force.initialize = function(_nodes: any[]) {
+
+  force.initialize = function (_nodes: any[]) {
     nodes = _nodes;
   };
-  
+
   return force;
 }
 
-export default function OwnershipGraph({ 
-  nodes, 
-  edges, 
-  width = 600, 
+export default function OwnershipGraph({
+  nodes,
+  edges,
+  width = 600,
   height = 400,
   isFullscreen = false,
   onExpandClick,
@@ -360,16 +368,40 @@ export default function OwnershipGraph({
   selectedNode: externalSelectedNode,
   showInlineCard = true
 }: OwnershipGraphProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [dimensions, setDimensions] = useState({ width, height });
+  // Use dimensions if available, otherwise fallback to props
+  const graphWidth = dimensions.width || width;
+  const graphHeight = dimensions.height || height;
+
   const svgRef = useRef<SVGSVGElement>(null);
+
+  // Responsive resize observer
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    const resizeObserver = new ResizeObserver((entries) => {
+      for (const entry of entries) {
+        setDimensions({
+          width: entry.contentRect.width,
+          height: entry.contentRect.height
+        });
+      }
+    });
+
+    resizeObserver.observe(containerRef.current);
+    return () => resizeObserver.disconnect();
+  }, []);
   const gRef = useRef<d3.Selection<SVGGElement, unknown, null, undefined> | null>(null);
   const simulationRef = useRef<d3.Simulation<any, any> | null>(null);
   const simNodesRef = useRef<any[]>([]);
   const simEdgesRef = useRef<any[]>([]);
   const initializedRef = useRef(false);
   const [internalSelectedNode, setInternalSelectedNode] = useState<EntityNode | null>(null);
-  
+
   // Use external selected node if provided, otherwise use internal state
   const selectedNode = externalSelectedNode !== undefined ? externalSelectedNode : internalSelectedNode;
+
   const setSelectedNode = (node: EntityNode | null) => {
     if (onNodeSelect) {
       onNodeSelect(node);
@@ -378,8 +410,8 @@ export default function OwnershipGraph({
     }
   };
 
-  // Filter out nodes with unknown/mock source (no real API data)
-  const validNodes = useMemo(() => {
+  // First pass: Filter out nodes with unknown/mock source (no real API data)
+  const baseValidNodes = useMemo(() => {
     return nodes.filter(n => {
       // Keep root nodes always
       if (n.is_root) return true;
@@ -392,15 +424,29 @@ export default function OwnershipGraph({
     });
   }, [nodes]);
 
-  // Filter edges to only include valid ones (connected to valid nodes)
+  // Filter edges to only include valid ones (connected to base valid nodes)
   const validEdges = useMemo(() => {
-    const nodeIds = new Set(validNodes.map(n => n.id));
+    const nodeIds = new Set(baseValidNodes.map(n => n.id));
     return edges.filter(e => {
       const sourceId = typeof e.source === 'object' ? e.source.id : e.source;
       const targetId = typeof e.target === 'object' ? e.target.id : e.target;
       return nodeIds.has(sourceId) && nodeIds.has(targetId);
     });
-  }, [validNodes, edges]);
+  }, [baseValidNodes, edges]);
+
+  // Second pass: Filter nodes to only include those that are connected (or root)
+  const validNodes = useMemo(() => {
+    // Get all node IDs that are part of an edge
+    const connectedNodeIds = new Set<string>();
+    validEdges.forEach(e => {
+      const sourceId = typeof e.source === 'object' ? e.source.id : e.source;
+      const targetId = typeof e.target === 'object' ? e.target.id : e.target;
+      connectedNodeIds.add(String(sourceId));
+      connectedNodeIds.add(String(targetId));
+    });
+
+    return baseValidNodes.filter(n => n.is_root || connectedNodeIds.has(n.id));
+  }, [baseValidNodes, validEdges]);
 
   // Track structure changes (only node IDs and edge connections)
   const structureKey = useMemo(() => {
@@ -437,6 +483,17 @@ export default function OwnershipGraph({
 
   }, [validNodes]); // Run when nodes change (including red_flags updates)
 
+  // Handle Escape key to close selection
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setSelectedNode(null);
+      }
+    };
+    window.addEventListener("keydown", handleEsc);
+    return () => window.removeEventListener("keydown", handleEsc);
+  }, [setSelectedNode]);
+
   // Initialize or update graph structure
   useEffect(() => {
     if (!svgRef.current || validNodes.length === 0) return;
@@ -449,7 +506,7 @@ export default function OwnershipGraph({
     // Check if we need to rebuild or just update
     const currentNodeIds = new Set(simNodesRef.current.map(n => n.id));
     const newNodeIds = new Set(validNodes.map(n => n.id));
-    
+
     // Find new nodes that don't exist yet
     const nodesToAdd = validNodes.filter(n => !currentNodeIds.has(n.id));
     const nodeIdsToRemove = [...currentNodeIds].filter(id => !newNodeIds.has(id));
@@ -474,7 +531,7 @@ export default function OwnershipGraph({
       // Calculate storage key and try to load saved positions
       const storageKey = getStorageKey(validNodes.map(n => n.id));
       const savedPositions = loadNodePositions(storageKey);
-      
+
       // Create simulation nodes with saved positions if available
       simNodesRef.current = validNodes.map((n, i) => {
         const saved = savedPositions?.[n.id];
@@ -487,7 +544,7 @@ export default function OwnershipGraph({
             fy: saved.fy ?? (n.is_root ? centerY : null),
           };
         }
-        
+
         const angle = (i / validNodes.length) * 2 * Math.PI - Math.PI / 2;
         const radius = n.is_root ? 0 : 80 + (i % 3) * 40;
         return {
@@ -524,6 +581,7 @@ export default function OwnershipGraph({
         .force("avoidEdges", forceAvoidEdges(simEdgesRef.current, nodeRadius))
         .force("uncrossEdges", forceUncrossEdges(simEdgesRef.current))
         .force("compact", forceCompact(centerX, centerY, 0.015))
+        .force("center", d3.forceCenter(graphWidth / 2, graphHeight / 2))
         .velocityDecay(0.3);
 
       simulationRef.current = simulation;
@@ -541,7 +599,7 @@ export default function OwnershipGraph({
 
       // Draw edges - wider hitbox for hover
       const edgeGroup = g.append("g").attr("class", "edges");
-      
+
       // Invisible wider lines for easier hover detection
       const linkHitboxes = edgeGroup.selectAll(".edge-hitbox")
         .data(simEdgesRef.current)
@@ -551,7 +609,7 @@ export default function OwnershipGraph({
         .attr("stroke", "transparent")
         .attr("stroke-width", 15)
         .attr("cursor", "pointer");
-      
+
       // Visible edge lines
       const links = edgeGroup.selectAll(".edge-line")
         .data(simEdgesRef.current)
@@ -584,7 +642,7 @@ export default function OwnershipGraph({
         .attr("font-weight", "600")
         .text(d => formatLabel(d as any));
 
-      edgeLabels.each(function() {
+      edgeLabels.each(function () {
         const grp = d3.select(this);
         const text = grp.select("text");
         const bbox = (text.node() as SVGTextElement)?.getBBox();
@@ -599,7 +657,7 @@ export default function OwnershipGraph({
 
       // Add hover effects to show/hide labels
       linkHitboxes
-        .on("mouseenter", function(event, d: any) {
+        .on("mouseenter", function (event, d: any) {
           // Find the matching label and show it
           edgeLabels.filter((ld: any) => {
             const ls = typeof ld.source === 'object' ? ld.source.id : ld.source;
@@ -611,7 +669,7 @@ export default function OwnershipGraph({
             .transition()
             .duration(150)
             .attr("opacity", 1);
-          
+
           // Highlight the edge
           links.filter((ld: any) => {
             const ls = typeof ld.source === 'object' ? ld.source.id : ld.source;
@@ -623,13 +681,13 @@ export default function OwnershipGraph({
             .attr("stroke-width", 3)
             .attr("stroke-opacity", 1);
         })
-        .on("mouseleave", function(event, d: any) {
+        .on("mouseleave", function (event, d: any) {
           // Hide all labels
           edgeLabels
             .transition()
             .duration(300)
             .attr("opacity", 0);
-          
+
           // Reset edge style
           links
             .attr("stroke-width", 2)
@@ -735,13 +793,13 @@ export default function OwnershipGraph({
           if (n.y < minY) minY = n.y;
           if (n.y > maxY) maxY = n.y;
         });
-        
+
         const graphWidth = maxX - minX + 100;
         const graphHeight = maxY - minY + 100;
         const scale = Math.min(width / graphWidth, height / graphHeight, 1) * 0.9;
         const translateX = width / 2 - (minX + maxX) / 2 * scale;
         const translateY = height / 2 - (minY + maxY) / 2 * scale;
-        
+
         svg.transition().duration(500).call(
           zoom.transform,
           d3.zoomIdentity.translate(translateX, translateY).scale(scale)
@@ -752,7 +810,7 @@ export default function OwnershipGraph({
       // Incremental update - add new nodes without resetting existing positions
       const simulation = simulationRef.current;
       if (!simulation || !gRef.current) return;
-      
+
       // Calculate storage key for incremental updates
       const incrementalStorageKey = getStorageKey(validNodes.map(n => n.id));
 
@@ -761,19 +819,19 @@ export default function OwnershipGraph({
         // Position new nodes near related nodes or at edge of existing cluster
         let x = centerX + (Math.random() - 0.5) * 100;
         let y = centerY + (Math.random() - 0.5) * 100;
-        
+
         // Try to position near a connected node
         const connectedEdge = validEdges.find(e => {
           const s = typeof e.source === 'object' ? e.source.id : e.source;
           const t = typeof e.target === 'object' ? e.target.id : e.target;
           return s === n.id || t === n.id;
         });
-        
+
         if (connectedEdge) {
-          const connectedId = typeof connectedEdge.source === 'object' 
-            ? connectedEdge.source.id 
+          const connectedId = typeof connectedEdge.source === 'object'
+            ? connectedEdge.source.id
             : connectedEdge.source;
-          const otherId = connectedId === n.id 
+          const otherId = connectedId === n.id
             ? (typeof connectedEdge.target === 'object' ? connectedEdge.target.id : connectedEdge.target)
             : connectedId;
           const connectedNode = simNodesRef.current.find(sn => sn.id === otherId);
@@ -825,7 +883,7 @@ export default function OwnershipGraph({
       // Update edges - clear all and rebuild with hitboxes
       const edgeGroup = g.select(".edges");
       edgeGroup.selectAll("*").remove();
-      
+
       // Invisible wider lines for easier hover detection
       const linkHitboxes = edgeGroup.selectAll(".edge-hitbox")
         .data(simEdgesRef.current)
@@ -835,7 +893,7 @@ export default function OwnershipGraph({
         .attr("stroke", "transparent")
         .attr("stroke-width", 15)
         .attr("cursor", "pointer");
-      
+
       // Visible edge lines
       const links = edgeGroup.selectAll(".edge-line")
         .data(simEdgesRef.current)
@@ -869,7 +927,7 @@ export default function OwnershipGraph({
         .attr("font-weight", "600")
         .text(d => formatLabel(d as any));
 
-      edgeLabels.each(function() {
+      edgeLabels.each(function () {
         const grp = d3.select(this);
         const text = grp.select("text");
         const bbox = (text.node() as SVGTextElement)?.getBBox();
@@ -884,7 +942,7 @@ export default function OwnershipGraph({
 
       // Add hover effects to show/hide labels
       linkHitboxes
-        .on("mouseenter", function(event, d: any) {
+        .on("mouseenter", function (event, d: any) {
           edgeLabels.filter((ld: any) => {
             const ls = typeof ld.source === 'object' ? ld.source.id : ld.source;
             const lt = typeof ld.target === 'object' ? ld.target.id : ld.target;
@@ -895,7 +953,7 @@ export default function OwnershipGraph({
             .transition()
             .duration(150)
             .attr("opacity", 1);
-          
+
           links.filter((ld: any) => {
             const ls = typeof ld.source === 'object' ? ld.source.id : ld.source;
             const lt = typeof ld.target === 'object' ? ld.target.id : ld.target;
@@ -906,12 +964,12 @@ export default function OwnershipGraph({
             .attr("stroke-width", 3)
             .attr("stroke-opacity", 1);
         })
-        .on("mouseleave", function() {
+        .on("mouseleave", function () {
           edgeLabels
             .transition()
             .duration(300)
             .attr("opacity", 0);
-          
+
           links
             .attr("stroke-width", 2)
             .attr("stroke-opacity", 0.7);
@@ -1008,7 +1066,7 @@ export default function OwnershipGraph({
   }, [structureKey, width, height]); // Only run when structure changes
 
   return (
-    <div className={`relative ${isFullscreen ? 'w-full h-full' : ''}`}>
+    <div ref={containerRef} className={`relative ${isFullscreen ? 'w-full h-full' : 'w-full h-[500px]'}`}>
       {/* Expand/Close button */}
       {!isFullscreen && onExpandClick && (
         <button
@@ -1021,7 +1079,7 @@ export default function OwnershipGraph({
           </svg>
         </button>
       )}
-      
+
       {isFullscreen && onCloseFullscreen && (
         <button
           onClick={onCloseFullscreen}
@@ -1034,14 +1092,14 @@ export default function OwnershipGraph({
           <span className="text-sm text-[#fafafa]">Close</span>
         </button>
       )}
-      
+
       <svg
         ref={svgRef}
-        width={width}
-        height={height}
+        width={graphWidth}
+        height={graphHeight}
         className={`bg-[#0a0a0a] ${isFullscreen ? 'rounded-none' : 'rounded-lg border border-[#1f1f1f]'}`}
       />
-      
+
       {/* Compact Legend */}
       <div className={`absolute ${isFullscreen ? 'bottom-4 left-4' : 'bottom-2 left-2'} bg-[#111111]/90 backdrop-blur p-2 rounded border border-[#1f1f1f] text-[10px]`}>
         <div className="flex flex-wrap gap-x-3 gap-y-1">
@@ -1078,172 +1136,182 @@ export default function OwnershipGraph({
         </div>
       </div>
 
-      {/* Selected Node Info - Detailed Panel (only show if showInlineCard is true) */}
+      {/* Selected Node Info - Inline Modal (Centered) */}
       {showInlineCard && selectedNode && (
-        <div className={`absolute ${isFullscreen ? 'top-4 right-20' : 'top-10 right-2'} bg-[#111111]/95 backdrop-blur p-3 rounded border border-[#1f1f1f] w-72 ${isFullscreen ? 'max-h-[80vh]' : 'max-h-[350px]'} overflow-y-auto text-sm z-20`}>
-          {/* Header */}
-          <div className="flex items-start justify-between mb-2">
-            <h4 className="font-semibold break-words text-[#fafafa] flex-1 pr-2">{selectedNode.name}</h4>
-            <button
-              onClick={() => setSelectedNode(null)}
-              className="text-[10px] text-[#666] hover:text-[#00d4ff] flex-shrink-0"
-            >
-              X
-            </button>
-          </div>
-
-          {/* Data Source Badge */}
-          <div className="flex items-center gap-2 mb-2 flex-wrap">
-            <span className={`text-[10px] px-2 py-0.5 rounded ${
-              selectedNode.api_source === 'mock_demo' ? 'bg-[#666] text-white' :
-              selectedNode.api_source === 'opencorporates' ? 'bg-[#22c55e] text-white' :
-              selectedNode.api_source === 'sec_edgar' ? 'bg-[#3b82f6] text-white' :
-              selectedNode.api_source === 'uk_companies_house' ? 'bg-[#8b5cf6] text-white' :
-              selectedNode.api_source === 'gleif' ? 'bg-[#f97316] text-white' :
-              'bg-[#444] text-white'
-            }`}>
-              {selectedNode.api_source || 'Unknown Source'}
-            </span>
-            {selectedNode.is_mock && (
-              <span className="text-[10px] px-2 py-0.5 rounded bg-[#444] text-[#888]">Demo Data</span>
-            )}
-            {selectedNode.is_root && (
-              <span className="text-[10px] px-2 py-0.5 rounded bg-[#10b981] text-white">Audited</span>
-            )}
-          </div>
-
-          {/* Basic Info */}
-          <div className="space-y-1 text-xs border-t border-[#1f1f1f] pt-2">
-            <div className="flex justify-between">
-              <span className="text-muted-foreground">Type:</span>
-              <span className="capitalize text-[#fafafa]">{selectedNode.type}</span>
+        <>
+          {/* Backdrop for click-outside */}
+          <div
+            className="absolute inset-0 z-40 bg-black/20 backdrop-blur-[1px]"
+            onClick={() => setSelectedNode(null)}
+          />
+          <div className={`absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 bg-[#111111]/95 backdrop-blur p-4 rounded-lg border border-[#1f1f1f] w-80 shadow-2xl ${isFullscreen ? 'max-h-[80vh]' : 'max-h-[350px]'} overflow-y-auto text-sm z-50`} onClick={(e) => e.stopPropagation()}>
+            {/* Header */}
+            <div className="flex items-start justify-between mb-2">
+              <h4 className="font-semibold wrap-break-word text-[#fafafa] flex-1 pr-2">{selectedNode.name}</h4>
+              <button
+                onClick={() => setSelectedNode(null)}
+                className="text-[10px] text-[#666] hover:text-[#00d4ff] shrink-0"
+              >
+                X
+              </button>
             </div>
-            {selectedNode.jurisdiction && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Jurisdiction:</span>
-                <span className="text-[#fafafa]">{selectedNode.jurisdiction}</span>
-              </div>
-            )}
-            {selectedNode.status && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Status:</span>
-                <span className={`${selectedNode.status === 'active' ? 'text-[#22c55e]' : 'text-[#ff6b35]'}`}>
-                  {selectedNode.status}
-                </span>
-              </div>
-            )}
-            {selectedNode.registration_number && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Reg. No:</span>
-                <span className="text-[#fafafa] font-mono text-[10px]">{selectedNode.registration_number}</span>
-              </div>
-            )}
-            {selectedNode.registration_date && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Reg. Date:</span>
-                <span className="text-[#fafafa]">{selectedNode.registration_date}</span>
-              </div>
-            )}
-            {selectedNode.lei && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">LEI:</span>
-                <span className="text-[#fafafa] font-mono text-[10px]">{selectedNode.lei.slice(0, 10)}...</span>
-              </div>
-            )}
-            {selectedNode.ticker && (
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Ticker:</span>
-                <span className="text-[#00d4ff] font-bold">{selectedNode.ticker}</span>
-              </div>
-            )}
-          </div>
 
-          {/* Gemini Classification */}
-          {selectedNode.gemini_classification && (
-            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
-              <div className="text-[10px] text-muted-foreground mb-1">AI Classification:</div>
-              <div className="text-xs text-[#a855f7] capitalize">{selectedNode.gemini_classification.replace(/_/g, ' ')}</div>
-              {selectedNode.data_quality_score !== undefined && (
-                <div className="flex items-center gap-2 mt-1">
-                  <span className="text-[10px] text-muted-foreground">Data Quality:</span>
-                  <div className="flex-1 bg-[#1f1f1f] rounded-full h-1.5">
-                    <div 
-                      className="bg-[#00d4ff] h-1.5 rounded-full" 
-                      style={{ width: `${selectedNode.data_quality_score * 100}%` }}
-                    />
-                  </div>
-                  <span className="text-[10px] text-[#fafafa]">{Math.round(selectedNode.data_quality_score * 100)}%</span>
+            {/* Data Source Badge */}
+            <div className="flex items-center gap-2 mb-2 flex-wrap">
+              <span className={`text-[10px] px-2 py-0.5 rounded ${selectedNode.api_source === 'mock_demo' ? 'bg-[#666] text-white' :
+                selectedNode.api_source === 'opencorporates' ? 'bg-[#22c55e] text-white' :
+                  selectedNode.api_source === 'sec_edgar' ? 'bg-[#3b82f6] text-white' :
+                    selectedNode.api_source === 'uk_companies_house' ? 'bg-[#8b5cf6] text-white' :
+                      selectedNode.api_source === 'gleif' ? 'bg-[#f97316] text-white' :
+                        'bg-[#444] text-white'
+                }`}>
+                {selectedNode.api_source || 'Unknown Source'}
+              </span>
+
+
+              {selectedNode.is_mock && (
+                <span className="text-[10px] px-2 py-0.5 rounded bg-[#444] text-[#888]">Demo Data</span>
+              )}
+              {selectedNode.is_root && (
+                <span className="text-[10px] px-2 py-0.5 rounded bg-[#10b981] text-white">Audited</span>
+              )}
+            </div>
+
+            {/* Basic Info */}
+            <div className="space-y-1 text-xs border-t border-[#1f1f1f] pt-2">
+              <div className="flex justify-between">
+                <span className="text-muted-foreground">Type:</span>
+                <span className="capitalize text-[#fafafa]">{selectedNode.type}</span>
+              </div>
+              {selectedNode.jurisdiction && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Jurisdiction:</span>
+                  <span className="text-[#fafafa]">{selectedNode.jurisdiction}</span>
+                </div>
+              )}
+              {selectedNode.status && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Status:</span>
+                  <span className={`${selectedNode.status === 'active' ? 'text-[#22c55e]' : 'text-[#ff6b35]'}`}>
+                    {selectedNode.status}
+                  </span>
+                </div>
+              )}
+              {selectedNode.registration_number && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Reg. No:</span>
+                  <span className="text-[#fafafa] font-mono text-[10px]">{selectedNode.registration_number}</span>
+                </div>
+              )}
+              {selectedNode.registration_date && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Reg. Date:</span>
+                  <span className="text-[#fafafa]">{selectedNode.registration_date}</span>
+                </div>
+              )}
+              {selectedNode.lei && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">LEI:</span>
+                  <span className="text-[#fafafa] font-mono text-[10px]">{selectedNode.lei.slice(0, 10)}...</span>
+                </div>
+              )}
+              {selectedNode.ticker && (
+                <div className="flex justify-between">
+                  <span className="text-muted-foreground">Ticker:</span>
+                  <span className="text-[#00d4ff] font-bold">{selectedNode.ticker}</span>
                 </div>
               )}
             </div>
-          )}
 
-          {/* Red Flags */}
-          {selectedNode.red_flags && selectedNode.red_flags.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
-              <div className="text-[10px] text-[#ff3366] font-medium mb-1">
-                Red Flags ({selectedNode.red_flags.length}):
-              </div>
-              <div className="space-y-1">
-                {selectedNode.red_flags.map((flag, i) => (
-                  <div key={i} className="text-[10px] text-muted-foreground bg-[#1a0a0a] p-1.5 rounded border border-[#ff3366]/20">
-                    {flag}
+            {/* Gemini Classification */}
+            {selectedNode.gemini_classification && (
+              <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+                <div className="text-[10px] text-muted-foreground mb-1">AI Classification:</div>
+                <div className="text-xs text-[#a855f7] capitalize">{selectedNode.gemini_classification.replace(/_/g, ' ')}</div>
+                {selectedNode.data_quality_score !== undefined && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <span className="text-[10px] text-muted-foreground">Data Quality:</span>
+                    <div className="flex-1 bg-[#1f1f1f] rounded-full h-1.5">
+                      <div
+                        className="bg-[#00d4ff] h-1.5 rounded-full"
+                        style={{ width: `${selectedNode.data_quality_score * 100}%` }}
+                      />
+                    </div>
+                    <span className="text-[10px] text-[#fafafa]">{Math.round(selectedNode.data_quality_score * 100)}%</span>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {/* Registered Address */}
-          {selectedNode.registered_address && (
-            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
-              <div className="text-[10px] text-muted-foreground mb-1">Registered Address:</div>
-              <div className="text-[10px] text-[#fafafa]">{selectedNode.registered_address}</div>
-            </div>
-          )}
-
-          {/* Directors */}
-          {selectedNode.directors && selectedNode.directors.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
-              <div className="text-[10px] text-muted-foreground mb-1">
-                Directors ({selectedNode.directors.length}):
-              </div>
-              <div className="space-y-1">
-                {selectedNode.directors.slice(0, 3).map((dir: any, i: number) => (
-                  <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
-                    <span>{dir.name}</span>
-                    {dir.role && <span className="text-muted-foreground">{dir.role}</span>}
-                  </div>
-                ))}
-                {selectedNode.directors.length > 3 && (
-                  <div className="text-[10px] text-muted-foreground">+{selectedNode.directors.length - 3} more</div>
                 )}
               </div>
-            </div>
-          )}
+            )}
 
-          {/* Beneficial Owners */}
-          {selectedNode.beneficial_owners && selectedNode.beneficial_owners.length > 0 && (
-            <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
-              <div className="text-[10px] text-muted-foreground mb-1">
-                Beneficial Owners ({selectedNode.beneficial_owners.length}):
+            {/* Red Flags */}
+            {selectedNode.red_flags && selectedNode.red_flags.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+                <div className="text-[10px] text-[#ff3366] font-medium mb-1">
+                  Red Flags ({selectedNode.red_flags.length}):
+                </div>
+                <div className="space-y-1">
+                  {selectedNode.red_flags.map((flag, i) => (
+                    <div key={i} className="text-[10px] text-muted-foreground bg-[#1a0a0a] p-1.5 rounded border border-[#ff3366]/20">
+                      {flag}
+                    </div>
+                  ))}
+                </div>
               </div>
-              <div className="space-y-1">
-                {selectedNode.beneficial_owners.slice(0, 3).map((owner: any, i: number) => (
-                  <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
-                    <span>{owner.name}</span>
-                    {owner.ownership_percentage && (
-                      <span className="text-[#00d4ff]">{owner.ownership_percentage}%</span>
-                    )}
-                  </div>
-                ))}
-                {selectedNode.beneficial_owners.length > 3 && (
-                  <div className="text-[10px] text-muted-foreground">+{selectedNode.beneficial_owners.length - 3} more</div>
-                )}
+            )}
+
+            {/* Registered Address */}
+            {selectedNode.registered_address && (
+              <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+                <div className="text-[10px] text-muted-foreground mb-1">Registered Address:</div>
+                <div className="text-[10px] text-[#fafafa]">{selectedNode.registered_address}</div>
               </div>
-            </div>
-          )}
-        </div>
+            )}
+
+            {/* Directors */}
+            {selectedNode.directors && selectedNode.directors.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+                <div className="text-[10px] text-muted-foreground mb-1">
+                  Directors ({selectedNode.directors.length}):
+                </div>
+                <div className="space-y-1">
+                  {selectedNode.directors.slice(0, 3).map((dir: any, i: number) => (
+                    <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
+                      <span>{dir.name}</span>
+                      {dir.role && <span className="text-muted-foreground">{dir.role}</span>}
+                    </div>
+                  ))}
+                  {selectedNode.directors.length > 3 && (
+                    <div className="text-[10px] text-muted-foreground">+{selectedNode.directors.length - 3} more</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Beneficial Owners */}
+            {selectedNode.beneficial_owners && selectedNode.beneficial_owners.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-[#1f1f1f]">
+                <div className="text-[10px] text-muted-foreground mb-1">
+                  Beneficial Owners ({selectedNode.beneficial_owners.length}):
+                </div>
+                <div className="space-y-1">
+                  {selectedNode.beneficial_owners.slice(0, 3).map((owner: any, i: number) => (
+                    <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
+                      <span>{owner.name}</span>
+                      {owner.ownership_percentage && (
+                        <span className="text-[#00d4ff]">{owner.ownership_percentage}%</span>
+                      )}
+                    </div>
+                  ))}
+                  {selectedNode.beneficial_owners.length > 3 && (
+                    <div className="text-[10px] text-muted-foreground">+{selectedNode.beneficial_owners.length - 3} more</div>
+                  )}
+                </div>
+              </div>
+            )}
+
+
+          </div>
+        </>
       )}
     </div>
   );

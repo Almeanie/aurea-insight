@@ -10,7 +10,7 @@ import {
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { 
+import {
   Brain,
   MessageSquare,
   ArrowRight,
@@ -39,16 +39,16 @@ interface GeminiInteractionDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
-export default function GeminiInteractionDialog({ 
-  interaction, 
-  open, 
-  onOpenChange 
+export default function GeminiInteractionDialog({
+  interaction,
+  open,
+  onOpenChange
 }: GeminiInteractionDialogProps) {
   if (!interaction) return null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] bg-[#111111] border-[#1f1f1f]">
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto bg-[#111111] border-[#1f1f1f]">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <Brain className="h-6 w-6 text-[#a855f7]" />
@@ -96,95 +96,81 @@ export default function GeminiInteractionDialog({
           </TabsList>
 
           {/* Prompt Tab */}
-          <TabsContent value="prompt">
-            <ScrollArea className="h-[400px]">
-              <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f]">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-medium text-[#00d4ff]">Prompt Sent to Gemini (FULL)</h4>
-                  <Badge variant="outline">{interaction.prompt_length} chars</Badge>
-                </div>
-                <div className="bg-[#111111] rounded overflow-hidden border border-[#1f1f1f]">
-                  <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#1f1f1f] flex justify-between items-center">
-                    <span className="text-xs text-muted-foreground">Input to AI Model</span>
-                    <Badge className="bg-[#00d4ff] text-black">INPUT</Badge>
-                  </div>
-                  <pre className="whitespace-pre-wrap text-sm font-mono text-muted-foreground p-4 overflow-x-auto max-h-[320px] overflow-y-auto">
-                    {interaction.prompt_full || interaction.prompt_preview}
-                  </pre>
-                </div>
+          <TabsContent value="prompt" className="mt-0">
+            <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f]">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-medium text-[#00d4ff]">Prompt Sent to Gemini</h4>
+                <Badge variant="outline">{interaction.prompt_length} chars</Badge>
               </div>
-            </ScrollArea>
+              <div className="bg-[#111111] rounded overflow-hidden border border-[#1f1f1f]">
+                <pre className="whitespace-pre-wrap text-sm font-mono text-muted-foreground p-4 overflow-x-auto">
+                  {interaction.prompt_full || interaction.prompt_preview}
+                </pre>
+              </div>
+            </div>
           </TabsContent>
 
           {/* Response Tab */}
-          <TabsContent value="response">
-            <ScrollArea className="h-[400px]">
-              <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f]">
-                <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-medium text-[#22c55e]">Response from Gemini (FULL)</h4>
-                  <Badge variant="outline">{interaction.response_length} chars</Badge>
-                </div>
-                {interaction.error ? (
-                  <div className="bg-[#ff3366]/10 border border-[#ff3366] p-4 rounded">
-                    <p className="text-[#ff3366] font-medium">Error Occurred</p>
-                    <p className="text-sm text-muted-foreground mt-2">{interaction.error}</p>
-                  </div>
-                ) : (interaction.response_full || interaction.response_preview) ? (
-                  <div className="bg-[#111111] rounded overflow-hidden border border-[#1f1f1f]">
-                    <div className="bg-[#1a1a1a] px-3 py-2 border-b border-[#1f1f1f] flex justify-between items-center">
-                      <span className="text-xs text-muted-foreground">Output from AI Model</span>
-                      <Badge className="bg-[#22c55e] text-black">OUTPUT</Badge>
-                    </div>
-                    <pre className="whitespace-pre-wrap text-sm font-mono text-muted-foreground p-4 overflow-x-auto max-h-[320px] overflow-y-auto">
-                      {interaction.response_full || interaction.response_preview}
-                    </pre>
-                  </div>
-                ) : (
-                  <p className="text-muted-foreground italic">No response available</p>
-                )}
+          <TabsContent value="response" className="mt-0">
+            <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f]">
+              <div className="flex items-center justify-between mb-3">
+                <h4 className="font-medium text-[#22c55e]">Response from Gemini</h4>
+                <Badge variant="outline">{interaction.response_length} chars</Badge>
               </div>
-            </ScrollArea>
+              {interaction.error ? (
+                <div className="bg-[#ff3366]/10 border border-[#ff3366] p-4 rounded">
+                  <p className="text-[#ff3366] font-medium">Error Occurred</p>
+                  <p className="text-sm text-muted-foreground mt-2">{interaction.error}</p>
+                </div>
+              ) : (interaction.response_full || interaction.response_preview) ? (
+                <div className="bg-[#111111] rounded overflow-hidden border border-[#1f1f1f]">
+                  <pre className="whitespace-pre-wrap text-sm font-mono text-muted-foreground p-4 overflow-x-auto">
+                    {interaction.response_full || interaction.response_preview}
+                  </pre>
+                </div>
+              ) : (
+                <p className="text-muted-foreground italic">No response available</p>
+              )}
+            </div>
           </TabsContent>
 
           {/* Integrity Tab */}
-          <TabsContent value="integrity">
-            <ScrollArea className="h-[400px]">
-              <div className="space-y-4">
-                <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f]">
-                  <h4 className="font-medium mb-3">Cryptographic Verification</h4>
-                  <p className="text-sm text-muted-foreground mb-4">
-                    These SHA-256 hashes allow regulators to verify that prompts and responses 
-                    have not been tampered with since the audit was performed.
-                  </p>
-                  
-                  <div className="space-y-4">
-                    <div>
-                      <span className="text-sm text-muted-foreground">Prompt Hash (SHA-256):</span>
-                      <div className="font-mono text-xs text-[#00d4ff] bg-[#111111] p-3 rounded mt-1 break-all">
-                        {interaction.prompt_hash}
-                      </div>
+          <TabsContent value="integrity" className="mt-0">
+            <div className="space-y-4">
+              <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f]">
+                <h4 className="font-medium mb-3">Cryptographic Verification</h4>
+                <p className="text-sm text-muted-foreground mb-4">
+                  These SHA-256 hashes allow regulators to verify that prompts and responses
+                  have not been tampered with since the audit was performed.
+                </p>
+
+                <div className="space-y-4">
+                  <div>
+                    <span className="text-sm text-muted-foreground">Prompt Hash (SHA-256):</span>
+                    <div className="font-mono text-xs text-[#00d4ff] bg-[#111111] p-3 rounded mt-1 break-all">
+                      {interaction.prompt_hash}
                     </div>
-                    
-                    <div>
-                      <span className="text-sm text-muted-foreground">Response Hash (SHA-256):</span>
-                      <div className="font-mono text-xs text-[#22c55e] bg-[#111111] p-3 rounded mt-1 break-all">
-                        {interaction.response_hash || "N/A (no response)"}
-                      </div>
+                  </div>
+
+                  <div>
+                    <span className="text-sm text-muted-foreground">Response Hash (SHA-256):</span>
+                    <div className="font-mono text-xs text-[#22c55e] bg-[#111111] p-3 rounded mt-1 break-all">
+                      {interaction.response_hash || "N/A (no response)"}
                     </div>
                   </div>
                 </div>
-
-                <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f] border-l-4 border-l-[#22c55e]">
-                  <h4 className="font-medium mb-2 text-[#22c55e]">Audit Trail Guarantee</h4>
-                  <ul className="text-sm text-muted-foreground space-y-2">
-                    <li>* Every AI interaction is logged with timestamps</li>
-                    <li>* Cryptographic hashes ensure data integrity</li>
-                    <li>* Prompts and responses are preserved for regulatory review</li>
-                    <li>* The full audit trail can be exported for compliance</li>
-                  </ul>
-                </div>
               </div>
-            </ScrollArea>
+
+              <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f] border-l-4 border-l-[#22c55e]">
+                <h4 className="font-medium mb-2 text-[#22c55e]">Audit Trail Guarantee</h4>
+                <ul className="text-sm text-muted-foreground space-y-2">
+                  <li>* Every AI interaction is logged with timestamps</li>
+                  <li>* Cryptographic hashes ensure data integrity</li>
+                  <li>* Prompts and responses are preserved for regulatory review</li>
+                  <li>* The full audit trail can be exported for compliance</li>
+                </ul>
+              </div>
+            </div>
           </TabsContent>
         </Tabs>
       </DialogContent>

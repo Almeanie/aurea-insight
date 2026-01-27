@@ -14,11 +14,11 @@ import FindingDetailDialog from "@/components/audit/FindingDetailDialog";
 import GeminiInteractionDialog from "@/components/audit/GeminiInteractionDialog";
 import ReasoningStepDialog from "@/components/audit/ReasoningStepDialog";
 import AJEDetailCard from "@/components/audit/AJEDetailCard";
-import { 
-  Shield, 
-  Play, 
-  FileText, 
-  Network, 
+import {
+  Shield,
+  Play,
+  FileText,
+  Network,
   MessageSquare,
   AlertTriangle,
   TrendingUp,
@@ -71,19 +71,19 @@ export default function CompanyPage({ params }: PageProps) {
   const [auditTotalSteps, setAuditTotalSteps] = useState(8);
   const [auditStepName, setAuditStepName] = useState("");
   const [auditStatus, setAuditStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
-  
+
   const [ownershipProgress, setOwnershipProgress] = useState(0);
   const [ownershipCurrentStep, setOwnershipCurrentStep] = useState(0);
   const [ownershipTotalSteps, setOwnershipTotalSteps] = useState(10);
   const [ownershipStepName, setOwnershipStepName] = useState("");
   const [ownershipStatus, setOwnershipStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
-  
+
   const [ownershipGraphId, setOwnershipGraphId] = useState<string | null>(null);
   const [isOwnershipFullscreen, setIsOwnershipFullscreen] = useState(false);
   const [selectedOwnershipNode, setSelectedOwnershipNode] = useState<EntityNode | null>(null);
 
   // Chat state
-  const [chatMessages, setChatMessages] = useState<{role: string; content: string}[]>([]);
+  const [chatMessages, setChatMessages] = useState<{ role: string; content: string }[]>([]);
   const [chatInput, setChatInput] = useState("");
   const [isChatLoading, setIsChatLoading] = useState(false);
   const chatRef = useRef<HTMLDivElement>(null);
@@ -145,63 +145,12 @@ export default function CompanyPage({ params }: PageProps) {
   const [streamingFindings, setStreamingFindings] = useState<any[]>([]);
   const [streamingAjes, setStreamingAjes] = useState<any[]>([]);
   const [streamingRiskScore, setStreamingRiskScore] = useState<any>(null);
-  
+
   // State for streaming reasoning chain and gemini interactions
   const [streamingReasoningChain, setStreamingReasoningChain] = useState<any[]>([]);
   const [streamingGeminiInteractions, setStreamingGeminiInteractions] = useState<any[]>([]);
 
-  // Stop audit function
-  const stopAudit = async () => {
-    if (!currentAuditId) return;
-    
-    try {
-      const response = await fetch(`http://localhost:8000/api/audit/${id}/cancel/${currentAuditId}`, {
-        method: "POST"
-      });
-      if (response.ok) {
-        setAuditStatus("paused");
-        addReasoningStep("Audit paused by user", "info");
-      }
-    } catch (error) {
-      console.error("Failed to stop audit:", error);
-    }
-  };
 
-  // Resume audit function
-  const resumeAudit = async () => {
-    if (!currentAuditId) return;
-    
-    try {
-      setAuditStatus("running");
-      addReasoningStep("Resuming audit from checkpoint...", "info");
-      
-      const response = await fetch(`http://localhost:8000/api/audit/${id}/resume/${currentAuditId}`, {
-        method: "POST"
-      });
-      
-      if (response.ok) {
-        setQuotaExceeded(false);
-        // Reconnect to SSE
-        const eventSource = new EventSource(`http://localhost:8000/api/audit/${id}/stream/${currentAuditId}`);
-        eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.progress_percent !== undefined) setAuditProgress(data.progress_percent);
-            if (data.current_step !== undefined) setAuditCurrentStep(data.current_step);
-            if (data.step_name) setAuditStepName(data.step_name);
-            if (data.type === 'end' || data.type === 'completed') {
-              setAuditStatus("completed");
-              eventSource.close();
-            }
-            if (data.message) addReasoningStep(data.message, "info");
-          } catch (e) {}
-        };
-      }
-    } catch (error) {
-      console.error("Failed to resume audit:", error);
-      addReasoningStep(`Resume failed: ${error}`, "warning");
-    }
-  };
 
   const runAudit = async () => {
     setIsAuditing(true);
@@ -217,7 +166,7 @@ export default function CompanyPage({ params }: PageProps) {
     setStreamingRiskScore(null);
     setStreamingReasoningChain([]);
     setStreamingGeminiInteractions([]);
-    
+
     addReasoningStep("Initializing audit engine...", "info");
 
     // Generate a temporary audit ID for early SSE connection
@@ -230,20 +179,20 @@ export default function CompanyPage({ params }: PageProps) {
       const response = await fetch(`http://localhost:8000/api/audit/${id}/run`, {
         method: "POST"
       });
-      
+
       if (response.ok) {
         const result = await response.json();
         auditId = result.audit_id;
         setCurrentAuditId(auditId);
-        
+
         // Connect to SSE stream for live updates
         // The backend's subscribe() method will send all existing progress
         eventSource = new EventSource(`http://localhost:8000/api/audit/${id}/stream/${auditId}`);
-        
+
         eventSource.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            
+
             // Update progress info if available
             if (data.progress_percent !== undefined) {
               setAuditProgress(data.progress_percent);
@@ -260,14 +209,14 @@ export default function CompanyPage({ params }: PageProps) {
             if (data.status) {
               setAuditStatus(data.status as any);
             }
-            
+
             // Check for quota exceeded
             if (data.type === 'quota_exceeded' || data.status === 'quota_exceeded') {
               setAuditStatus("quota_exceeded");
               setQuotaExceeded(true);
               addReasoningStep("Quota exceeded - enter API key to continue", "warning");
             }
-            
+
             if (data.type === 'end' || data.type === 'completed') {
               setAuditStatus("completed");
               eventSource?.close();
@@ -279,9 +228,9 @@ export default function CompanyPage({ params }: PageProps) {
               // Handle streaming data updates
               const dataType = data.data.data_type;
               const payload = data.data.payload;
-              
+
               console.log("[SSE] Received data:", dataType, payload?.finding_id || payload?.aje_id || "risk_score");
-              
+
               if (dataType === 'finding' || dataType === 'finding_enhanced') {
                 // Add or update finding in streaming list
                 setStreamingFindings(prev => {
@@ -320,16 +269,16 @@ export default function CompanyPage({ params }: PageProps) {
                 `  Response: ${responsePreview}${responsePreview.length >= 150 ? '...' : ''}`
               ]);
             } else if (data.message) {
-              const stepType = data.type === 'ai' ? 'ai' : 
-                              data.type === 'success' || data.type === 'completed' ? 'success' : 
-                              data.type === 'error' || data.type === 'warning' ? 'warning' : 'info';
+              const stepType = data.type === 'ai' ? 'ai' :
+                data.type === 'success' || data.type === 'completed' ? 'success' :
+                  data.type === 'error' || data.type === 'warning' ? 'warning' : 'info';
               addReasoningStep(data.message, stepType);
             }
           } catch (e) {
             console.error("SSE parse error:", e);
           }
         };
-        
+
         eventSource.onerror = (event) => {
           // SSE errors are normal when connection closes - don't treat as critical error
           // Only log if we're still expecting data (isAuditing is true)
@@ -338,7 +287,7 @@ export default function CompanyPage({ params }: PageProps) {
           }
           eventSource?.close();
         };
-        
+
         // Helper to safely fetch with timeout
         const safeFetch = async (url: string, name: string) => {
           try {
@@ -361,7 +310,7 @@ export default function CompanyPage({ params }: PageProps) {
             return null;
           }
         };
-        
+
         // Wait for the SSE stream to signal completion, then fetch full results
         const waitForCompletion = () => {
           return new Promise<void>((resolve) => {
@@ -369,9 +318,9 @@ export default function CompanyPage({ params }: PageProps) {
             eventSource!.onmessage = (event) => {
               // Call original handler first
               if (originalOnMessage) {
-                originalOnMessage.call(eventSource, event);
+                originalOnMessage.call(eventSource!, event);
               }
-              
+
               try {
                 const data = JSON.parse(event.data);
                 if (data.type === 'end' || data.type === 'completed') {
@@ -381,20 +330,20 @@ export default function CompanyPage({ params }: PageProps) {
                 // Ignore parse errors
               }
             };
-            
+
             // Timeout after 5 minutes
             setTimeout(() => resolve(), 300000);
           });
         };
-        
+
         addReasoningStep(`Audit ID: ${auditId}`, "info");
         addReasoningStep("Waiting for audit to complete...", "info");
-        
+
         // Wait for the audit to complete
         await waitForCompletion();
-        
+
         addReasoningStep("Audit completed! Fetching detailed results...", "success");
-        
+
         // Fetch full results
         const [findingsData, ajesData, riskData, trailData] = await Promise.all([
           safeFetch(`http://localhost:8000/api/audit/${id}/findings?audit_id=${auditId}`, "findings"),
@@ -435,7 +384,7 @@ export default function CompanyPage({ params }: PageProps) {
         if (trailData?.audit_trail) {
           addReasoningStep(`Audit trail: ${trailData.audit_trail.reasoning_chain?.length || 0} steps, ${trailData.audit_trail.gemini_interactions?.length || 0} AI calls`, "ai");
         }
-        
+
         addReasoningStep("Audit complete. Review the tabs for details.", "success");
       } else {
         addReasoningStep("Audit request failed. Check backend logs.", "warning");
@@ -448,55 +397,7 @@ export default function CompanyPage({ params }: PageProps) {
     }
   };
 
-  // Stop ownership discovery function
-  const stopOwnershipDiscovery = async () => {
-    if (!ownershipGraphId) return;
-    
-    try {
-      const response = await fetch(`http://localhost:8000/api/ownership/cancel/${ownershipGraphId}`, {
-        method: "POST"
-      });
-      if (response.ok) {
-        setOwnershipStatus("paused");
-        addReasoningStep("Ownership discovery paused", "info");
-      }
-    } catch (error) {
-      console.error("Failed to stop ownership discovery:", error);
-    }
-  };
 
-  // Resume ownership discovery function
-  const resumeOwnershipDiscovery = async () => {
-    if (!ownershipGraphId) return;
-    
-    try {
-      setOwnershipStatus("running");
-      addReasoningStep("Resuming ownership discovery...", "info");
-      
-      const response = await fetch(`http://localhost:8000/api/ownership/resume/${ownershipGraphId}`, {
-        method: "POST"
-      });
-      
-      if (response.ok) {
-        // Reconnect to SSE
-        const eventSource = new EventSource(`http://localhost:8000/api/ownership/stream/${ownershipGraphId}`);
-        eventSource.onmessage = (event) => {
-          try {
-            const data = JSON.parse(event.data);
-            if (data.progress_percent !== undefined) setOwnershipProgress(data.progress_percent);
-            if (data.current_step !== undefined) setOwnershipCurrentStep(data.current_step);
-            if (data.step_name) setOwnershipStepName(data.step_name);
-            if (data.type === 'end' || data.type === 'completed') {
-              setOwnershipStatus("completed");
-              eventSource.close();
-            }
-          } catch (e) {}
-        };
-      }
-    } catch (error) {
-      console.error("Failed to resume ownership discovery:", error);
-    }
-  };
 
   const discoverOwnership = async () => {
     setIsDiscoveringOwnership(true);
@@ -523,14 +424,14 @@ export default function CompanyPage({ params }: PageProps) {
       if (response.ok) {
         const result = await response.json();
         addReasoningStep(`Analyzing ${result.vendors_analyzed} vendors...`, "info");
-        
+
         // Connect to SSE stream for live updates
         eventSource = new EventSource(`http://localhost:8000/api/ownership/stream/${graphId}`);
-        
+
         eventSource.onmessage = (event) => {
           try {
             const data = JSON.parse(event.data);
-            
+
             // Update progress info if available
             if (data.progress_percent !== undefined) {
               setOwnershipProgress(data.progress_percent);
@@ -547,13 +448,13 @@ export default function CompanyPage({ params }: PageProps) {
             if (data.status) {
               setOwnershipStatus(data.status as any);
             }
-            
+
             // Check for quota exceeded
             if (data.type === 'quota_exceeded' || data.status === 'quota_exceeded') {
               setOwnershipStatus("quota_exceeded");
               setQuotaExceeded(true);
             }
-            
+
             if (data.type === 'end' || data.type === 'completed') {
               setOwnershipStatus("completed");
               eventSource?.close();
@@ -565,9 +466,9 @@ export default function CompanyPage({ params }: PageProps) {
               // Handle streaming graph data
               const dataType = data.data.data_type;
               const payload = data.data.payload;
-              
+
               console.log("[Ownership SSE] Received:", dataType, payload?.name || payload?.id);
-              
+
               if (dataType === 'node') {
                 // Add node to streaming graph
                 setStreamingNodes(prev => {
@@ -584,7 +485,7 @@ export default function CompanyPage({ params }: PageProps) {
                   return prev.map(e => {
                     // Check if this edge matches the circular pattern
                     if ((e.source === payload.source && e.target === payload.target) ||
-                        (e.source === payload.target && e.target === payload.source)) {
+                      (e.source === payload.target && e.target === payload.source)) {
                       return { ...e, is_circular: true };
                     }
                     return e;
@@ -596,11 +497,11 @@ export default function CompanyPage({ params }: PageProps) {
                 setOwnershipFindings(prev => [...prev, payload]);
               }
             } else if (data.message) {
-              const stepType = data.type === 'ai' ? 'ai' : 
-                              data.type === 'success' || data.type === 'completed' ? 'success' : 
-                              data.type === 'error' || data.type === 'warning' ? 'warning' : 'info';
+              const stepType = data.type === 'ai' ? 'ai' :
+                data.type === 'success' || data.type === 'completed' ? 'success' :
+                  data.type === 'error' || data.type === 'warning' ? 'warning' : 'info';
               addReasoningStep(data.message, stepType);
-              
+
               // Check for boilerplate detection
               if (data.data?.type === 'boilerplate') {
                 addReasoningStep(`[Boilerplate] Skipped full discovery for template company`, "info");
@@ -610,7 +511,7 @@ export default function CompanyPage({ params }: PageProps) {
             console.error("SSE parse error:", e);
           }
         };
-        
+
         eventSource.onerror = () => {
           // SSE errors are normal when connection closes - don't treat as critical
           if (isDiscoveringOwnership) {
@@ -624,14 +525,14 @@ export default function CompanyPage({ params }: PageProps) {
           const originalOnMessage = eventSource!.onmessage;
           eventSource!.onmessage = (event) => {
             if (originalOnMessage) {
-              originalOnMessage.call(eventSource, event);
+              originalOnMessage.call(eventSource!, event);
             }
             try {
               const data = JSON.parse(event.data);
               if (data.type === 'end' || data.type === 'completed') {
                 resolve();
               }
-            } catch (e) {}
+            } catch (e) { }
           };
           // Timeout after 5 minutes
           setTimeout(() => resolve(), 300000);
@@ -712,24 +613,24 @@ export default function CompanyPage({ params }: PageProps) {
   // === MEMOIZED DATA MERGES (must be before any early returns for hooks rules) ===
   // Use streaming data while audit is running, fall back to final results when complete
   const riskScore = streamingRiskScore || auditResults?.riskScore;
-  
+
   // Get base findings - prefer final results if available
   const baseFindingsList = auditResults?.findings?.findings || [];
-  
+
   // Merge: ALWAYS prefer the version with ai_explanation
   const findings = useMemo(() => {
     if (baseFindingsList.length === 0 && streamingFindings.length === 0) {
       return [];
     }
-    
+
     // Combine all findings by ID, preferring the one with ai_explanation
     const allFindingsMap = new Map<string, any>();
-    
+
     // Add base findings first
     for (const f of baseFindingsList) {
       allFindingsMap.set(f.finding_id, f);
     }
-    
+
     // Override with streaming findings ONLY if they have ai_explanation
     for (const f of streamingFindings) {
       const existing = allFindingsMap.get(f.finding_id);
@@ -737,7 +638,7 @@ export default function CompanyPage({ params }: PageProps) {
         allFindingsMap.set(f.finding_id, f);
       }
     }
-    
+
     return Array.from(allFindingsMap.values());
   }, [baseFindingsList, streamingFindings]);
 
@@ -747,19 +648,19 @@ export default function CompanyPage({ params }: PageProps) {
     if (baseAjesList.length === 0 && streamingAjes.length === 0) {
       return [];
     }
-    
+
     const allAjesMap = new Map<string, any>();
-    
+
     // Add base AJEs first
     for (const a of baseAjesList) {
       allAjesMap.set(a.aje_id, a);
     }
-    
+
     // Override with streaming AJEs
     for (const a of streamingAjes) {
       allAjesMap.set(a.aje_id, a);
     }
-    
+
     return Array.from(allAjesMap.values());
   }, [baseAjesList, streamingAjes]);
 
@@ -771,7 +672,7 @@ export default function CompanyPage({ params }: PageProps) {
     }
     return trail?.reasoning_chain || [];
   }, [streamingReasoningChain, trail?.reasoning_chain]);
-  
+
   const geminiInteractions = useMemo(() => {
     if (streamingGeminiInteractions.length > 0) {
       return streamingGeminiInteractions;
@@ -818,8 +719,8 @@ export default function CompanyPage({ params }: PageProps) {
               <Download className="mr-2 h-4 w-4" />
               Export PDF
             </Button>
-            <Button 
-              className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90" 
+            <Button
+              className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90"
               size="sm"
               onClick={runAudit}
               disabled={isAuditing}
@@ -840,8 +741,6 @@ export default function CompanyPage({ params }: PageProps) {
           totalSteps={auditTotalSteps}
           stepName={auditStepName}
           status={auditStatus}
-          onStop={stopAudit}
-          onResume={resumeAudit}
         />
       </div>
 
@@ -858,13 +757,12 @@ export default function CompanyPage({ params }: PageProps) {
           <Card className="bg-[#111111] border-[#1f1f1f]">
             <CardContent className="pt-6">
               <div className="text-sm text-muted-foreground mb-1">Risk Score</div>
-              <div className={`text-3xl font-bold financial-number ${
-                riskScore?.risk_level === "critical" ? "text-[#ff3366]" :
+              <div className={`text-3xl font-bold financial-number ${riskScore?.risk_level === "critical" ? "text-[#ff3366]" :
                 riskScore?.risk_level === "high" ? "text-[#ff6b35]" :
-                riskScore?.risk_level === "medium" ? "text-[#fbbf24]" :
-                riskScore?.risk_level === "low" ? "text-[#22c55e]" :
-                "text-muted-foreground"
-              }`}>
+                  riskScore?.risk_level === "medium" ? "text-[#fbbf24]" :
+                    riskScore?.risk_level === "low" ? "text-[#22c55e]" :
+                      "text-muted-foreground"
+                }`}>
                 {riskScore ? riskScore.overall_score.toFixed(1) : "--"}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
@@ -910,8 +808,8 @@ export default function CompanyPage({ params }: PageProps) {
                 )}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
-                {auditResults ? (ajes.length > 0 ? "Generated" : "None needed") : 
-                 isAuditing && ajes.length > 0 ? <span className="text-[#00d4ff]">Generating...</span> : ""}
+                {auditResults ? (ajes.length > 0 ? "Generated" : "None needed") :
+                  isAuditing && ajes.length > 0 ? <span className="text-[#00d4ff]">Generating...</span> : ""}
               </div>
             </CardContent>
           </Card>
@@ -967,7 +865,7 @@ export default function CompanyPage({ params }: PageProps) {
                       )}
                     </CardTitle>
                     <CardDescription>
-                      {findings.length > 0 
+                      {findings.length > 0
                         ? `${findings.length} findings identified${isAuditing ? " (updating...)" : ""}`
                         : "Run an audit to see findings"
                       }
@@ -991,93 +889,91 @@ export default function CompanyPage({ params }: PageProps) {
                               // Finding is ready when it has AI explanation or audit is complete
                               const isProcessing = isAuditing && (!finding.ai_explanation || finding.ai_explanation.includes("skipped"));
                               const isClickable = !isProcessing;
-                              
+
                               return (
-                              <TableRow 
-                                key={finding.finding_id || idx} 
-                                className={`border-[#1f1f1f] transition-colors ${
-                                  isClickable 
-                                    ? 'cursor-pointer hover:bg-[#1a1a1a]' 
+                                <TableRow
+                                  key={finding.finding_id || idx}
+                                  className={`border-[#1f1f1f] transition-colors ${isClickable
+                                    ? 'cursor-pointer hover:bg-[#1a1a1a]'
                                     : 'cursor-not-allowed opacity-70'
-                                }`}
-                                onClick={() => {
-                                  if (!isClickable) return;
-                                  setSelectedFinding(finding);
-                                  setFindingDialogOpen(true);
-                                }}
-                              >
-                                <TableCell>
-                                  <Badge className={`
+                                    }`}
+                                  onClick={() => {
+                                    if (!isClickable) return;
+                                    setSelectedFinding(finding);
+                                    setFindingDialogOpen(true);
+                                  }}
+                                >
+                                  <TableCell>
+                                    <Badge className={`
                                     ${finding.severity === "critical" ? "bg-[#ff3366] hover:bg-[#ff3366]" : ""}
                                     ${finding.severity === "high" ? "bg-[#ff6b35] hover:bg-[#ff6b35]" : ""}
                                     ${finding.severity === "medium" ? "bg-[#fbbf24] text-black hover:bg-[#fbbf24]" : ""}
                                     ${finding.severity === "low" ? "bg-[#22c55e] hover:bg-[#22c55e]" : ""}
                                   `}>
-                                    {finding.severity?.toUpperCase()}
-                                  </Badge>
-                                </TableCell>
-                                <TableCell className="text-muted-foreground capitalize">{finding.category}</TableCell>
-                                <TableCell className="max-w-[300px]">
-                                  <div className="font-medium truncate">{finding.issue}</div>
-                                  <div className="text-xs text-muted-foreground mt-1 line-clamp-2 overflow-hidden">{finding.details?.substring(0, 80)}...</div>
-                                  {finding.detection_method && (
-                                    <div className="text-xs text-[#00d4ff] mt-1 flex items-center gap-1 overflow-hidden">
-                                      <Code className="h-3 w-3 flex-shrink-0" />
-                                      <span className="truncate">{finding.detection_method.substring(0, 50)}...</span>
-                                    </div>
-                                  )}
-                                </TableCell>
-                                <TableCell className="financial-number">
-                                  <div>{Math.round((finding.confidence || 0) * 100)}%</div>
-                                  {finding.ai_explanation && !finding.ai_explanation.includes("skipped") ? (
-                                    <div className="flex items-center gap-1 mt-1" title="AI explanation available">
-                                      <Brain className="h-3 w-3 text-[#a855f7]" />
-                                      <span className="text-[10px] text-[#a855f7]">AI Ready</span>
-                                    </div>
-                                  ) : isAuditing ? (
-                                    <div className="flex items-center gap-1 mt-1" title="Generating AI explanation...">
-                                      <Loader2 className="h-3 w-3 text-[#00d4ff] animate-spin" />
-                                      <span className="text-[10px] text-[#00d4ff]">Loading</span>
-                                    </div>
-                                  ) : (
-                                    <div className="flex items-center gap-1 mt-1" title="AI explanation not available">
-                                      <Lock className="h-3 w-3 text-muted-foreground" />
-                                      <span className="text-[10px] text-muted-foreground">Pending</span>
-                                    </div>
-                                  )}
-                                </TableCell>
-                                <TableCell>
-                                  <Button 
-                                    variant="ghost" 
-                                    size="sm"
-                                    className={`${
-                                      isClickable 
-                                        ? 'text-[#00d4ff] hover:text-[#00d4ff] hover:bg-[#00d4ff]/10' 
-                                        : 'text-muted-foreground cursor-not-allowed'
-                                    }`}
-                                    disabled={!isClickable}
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      if (!isClickable) return;
-                                      setSelectedFinding(finding);
-                                      setFindingDialogOpen(true);
-                                    }}
-                                  >
-                                    {isProcessing ? (
-                                      <>
-                                        <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                                        Processing
-                                      </>
-                                    ) : (
-                                      <>
-                                        <Eye className="h-4 w-4 mr-1" />
-                                        View
-                                      </>
+                                      {finding.severity?.toUpperCase()}
+                                    </Badge>
+                                  </TableCell>
+                                  <TableCell className="text-muted-foreground capitalize">{finding.category}</TableCell>
+                                  <TableCell className="max-w-[300px]">
+                                    <div className="font-medium truncate">{finding.issue}</div>
+                                    <div className="text-xs text-muted-foreground mt-1 line-clamp-2 overflow-hidden">{finding.details?.substring(0, 80)}...</div>
+                                    {finding.detection_method && (
+                                      <div className="text-xs text-[#00d4ff] mt-1 flex items-center gap-1 overflow-hidden">
+                                        <Code className="h-3 w-3 shrink-0" />
+                                        <span className="truncate">{finding.detection_method.substring(0, 50)}...</span>
+                                      </div>
                                     )}
-                                  </Button>
-                                </TableCell>
-                              </TableRow>
-                            );
+                                  </TableCell>
+                                  <TableCell className="financial-number">
+                                    <div>{Math.round((finding.confidence || 0) * 100)}%</div>
+                                    {finding.ai_explanation && !finding.ai_explanation.includes("skipped") ? (
+                                      <div className="flex items-center gap-1 mt-1" title="AI explanation available">
+                                        <Brain className="h-3 w-3 text-[#a855f7]" />
+                                        <span className="text-[10px] text-[#a855f7]">AI Ready</span>
+                                      </div>
+                                    ) : isAuditing ? (
+                                      <div className="flex items-center gap-1 mt-1" title="Generating AI explanation...">
+                                        <Loader2 className="h-3 w-3 text-[#00d4ff] animate-spin" />
+                                        <span className="text-[10px] text-[#00d4ff]">Loading</span>
+                                      </div>
+                                    ) : (
+                                      <div className="flex items-center gap-1 mt-1" title="AI explanation not available">
+                                        <Lock className="h-3 w-3 text-muted-foreground" />
+                                        <span className="text-[10px] text-muted-foreground">Pending</span>
+                                      </div>
+                                    )}
+                                  </TableCell>
+                                  <TableCell>
+                                    <Button
+                                      variant="ghost"
+                                      size="sm"
+                                      className={`${isClickable
+                                        ? 'text-[#00d4ff] hover:text-[#00d4ff] hover:bg-[#00d4ff]/10'
+                                        : 'text-muted-foreground cursor-not-allowed'
+                                        }`}
+                                      disabled={!isClickable}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        if (!isClickable) return;
+                                        setSelectedFinding(finding);
+                                        setFindingDialogOpen(true);
+                                      }}
+                                    >
+                                      {isProcessing ? (
+                                        <>
+                                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                          Processing
+                                        </>
+                                      ) : (
+                                        <>
+                                          <Eye className="h-4 w-4 mr-1" />
+                                          View
+                                        </>
+                                      )}
+                                    </Button>
+                                  </TableCell>
+                                </TableRow>
+                              );
                             })}
                           </TableBody>
                         </Table>
@@ -1105,8 +1001,8 @@ export default function CompanyPage({ params }: PageProps) {
                         Discover hidden ownership structures and related parties
                       </CardDescription>
                     </div>
-                    <Button 
-                      onClick={discoverOwnership} 
+                    <Button
+                      onClick={discoverOwnership}
                       disabled={isDiscoveringOwnership}
                       className="bg-[#8b5cf6] hover:bg-[#8b5cf6]/90"
                     >
@@ -1118,23 +1014,21 @@ export default function CompanyPage({ params }: PageProps) {
                       {isDiscoveringOwnership ? "Discovering..." : "Discover Ownership"}
                     </Button>
                   </CardHeader>
-                  
+
                   {/* Ownership Progress Bar */}
                   {ownershipStatus !== "idle" && (
                     <div className="px-6 pb-2">
                       <OwnershipProgress
                         isRunning={isDiscoveringOwnership}
                         progress={ownershipProgress}
-                        currentStep={ownershipCurrentStep}
+                        currentStep={Math.max(1, Math.ceil((ownershipProgress / 100) * ownershipTotalSteps))}
                         totalSteps={ownershipTotalSteps}
                         stepName={ownershipStepName}
                         status={ownershipStatus}
-                        onStop={stopOwnershipDiscovery}
-                        onResume={resumeOwnershipDiscovery}
                       />
                     </div>
                   )}
-                  
+
                   <CardContent className="overflow-hidden">
                     {/* Use streaming data while discovering, final graph when complete */}
                     {/* Keep streaming data as fallback if API fetch fails */}
@@ -1148,8 +1042,8 @@ export default function CompanyPage({ params }: PageProps) {
                           </div>
                         )}
                         <div className="max-w-full">
-                          <OwnershipGraph 
-                            nodes={ownershipGraph?.nodes || streamingNodes.map(n => ({
+                          <OwnershipGraph
+                            nodes={(ownershipGraph?.nodes && ownershipGraph.nodes.length > 0) ? ownershipGraph.nodes : streamingNodes.map(n => ({
                               id: n.id,
                               name: n.name,
                               type: n.type || "company",
@@ -1171,7 +1065,7 @@ export default function CompanyPage({ params }: PageProps) {
                               data_quality_score: n.data_quality_score,
                               is_mock: n.is_mock
                             }))}
-                            edges={ownershipGraph?.edges || streamingEdges.map(e => ({
+                            edges={(ownershipGraph?.edges && ownershipGraph.edges.length > 0) ? ownershipGraph.edges : streamingEdges.map(e => ({
                               source: e.source,
                               target: e.target,
                               relationship: e.relationship,
@@ -1182,7 +1076,7 @@ export default function CompanyPage({ params }: PageProps) {
                             onExpandClick={() => setIsOwnershipFullscreen(true)}
                             onNodeSelect={setSelectedOwnershipNode}
                             selectedNode={selectedOwnershipNode}
-                            showInlineCard={false}
+                            showInlineCard={true}
                           />
                         </div>
                         {ownershipFindings.length > 0 && (
@@ -1195,12 +1089,12 @@ export default function CompanyPage({ params }: PageProps) {
                               {ownershipFindings.map((finding: any, idx: number) => (
                                 <div key={finding.finding_id || idx} className="p-3 bg-[#0a0a0a] rounded border border-[#1f1f1f]">
                                   <div className="flex items-center gap-2 mb-1 flex-wrap">
-                                    <Badge className={`flex-shrink-0 ${finding.severity === "critical" ? "bg-[#ff3366]" : "bg-[#ff6b35]"}`}>
+                                    <Badge className={`shrink-0 ${finding.severity === "critical" ? "bg-[#ff3366]" : "bg-[#ff6b35]"}`}>
                                       {finding.severity?.toUpperCase()}
                                     </Badge>
-                                    <span className="font-medium break-words">{finding.issue}</span>
+                                    <span className="font-medium wrap-break-word">{finding.issue}</span>
                                   </div>
-                                  <p className="text-sm text-muted-foreground break-words">{finding.details}</p>
+                                  <p className="text-sm text-muted-foreground wrap-break-word">{finding.details}</p>
                                 </div>
                               ))}
                             </div>
@@ -1235,7 +1129,7 @@ export default function CompanyPage({ params }: PageProps) {
                         Reasoning Chain
                       </CardTitle>
                       <CardDescription>
-                        {reasoningChain.length > 0 
+                        {reasoningChain.length > 0
                           ? `${reasoningChain.length} documented steps`
                           : isAuditing ? "Building reasoning chain..." : "Run an audit to see reasoning"}
                       </CardDescription>
@@ -1245,8 +1139,8 @@ export default function CompanyPage({ params }: PageProps) {
                         {reasoningChain.length > 0 ? (
                           <div className="space-y-2">
                             {reasoningChain.map((step: any, idx: number) => (
-                              <div 
-                                key={idx} 
+                              <div
+                                key={idx}
                                 className="flex gap-3 p-2 rounded bg-[#0a0a0a] border border-[#1f1f1f] cursor-pointer hover:border-[#00d4ff] hover:bg-[#0f0f0f] transition-colors"
                                 onClick={() => {
                                   setSelectedReasoningStep(step);
@@ -1254,14 +1148,14 @@ export default function CompanyPage({ params }: PageProps) {
                                   setReasoningDialogOpen(true);
                                 }}
                               >
-                                <div className="w-6 h-6 rounded-full bg-[#00d4ff] text-black flex items-center justify-center text-xs font-bold flex-shrink-0">
+                                <div className="w-6 h-6 rounded-full bg-[#00d4ff] text-black flex items-center justify-center text-xs font-bold shrink-0">
                                   {idx + 1}
                                 </div>
                                 <div className="flex-1 min-w-0 overflow-hidden">
                                   <div className="text-xs text-muted-foreground font-mono truncate">{step.timestamp}</div>
-                                  <div className="text-sm mt-1 break-words line-clamp-2">{step.step}</div>
+                                  <div className="text-sm mt-1 wrap-break-word line-clamp-2">{step.step}</div>
                                 </div>
-                                <Eye className="h-4 w-4 text-[#00d4ff] opacity-50 flex-shrink-0" />
+                                <Eye className="h-4 w-4 text-[#00d4ff] opacity-50 shrink-0" />
                               </div>
                             ))}
                           </div>
@@ -1290,7 +1184,7 @@ export default function CompanyPage({ params }: PageProps) {
                         Gemini AI Interactions
                       </CardTitle>
                       <CardDescription>
-                        {geminiInteractions.length > 0 
+                        {geminiInteractions.length > 0
                           ? `${geminiInteractions.length} AI calls logged`
                           : "AI interactions will appear here"}
                       </CardDescription>
@@ -1300,8 +1194,8 @@ export default function CompanyPage({ params }: PageProps) {
                         {geminiInteractions.length > 0 ? (
                           <div className="space-y-3">
                             {geminiInteractions.map((interaction: any, idx: number) => (
-                              <div 
-                                key={idx} 
+                              <div
+                                key={idx}
                                 className="p-3 rounded bg-[#0a0a0a] border border-[#1f1f1f] cursor-pointer hover:border-[#a855f7] transition-colors"
                                 onClick={() => {
                                   setSelectedInteraction(interaction);
@@ -1476,8 +1370,8 @@ export default function CompanyPage({ params }: PageProps) {
                           )}
                         </CardTitle>
                         <CardDescription>
-                          {ajes.length > 0 || auditResults 
-                            ? `${ajes.length} correcting entries generated${isAuditing ? " (updating...)" : ""}` 
+                          {ajes.length > 0 || auditResults
+                            ? `${ajes.length} correcting entries generated${isAuditing ? " (updating...)" : ""}`
                             : "Run an audit first"}
                         </CardDescription>
                       </CardHeader>
@@ -1486,8 +1380,8 @@ export default function CompanyPage({ params }: PageProps) {
                           <ScrollArea className="h-[500px]">
                             <div className="space-y-4">
                               {ajes.map((aje: any, idx: number) => (
-                                <AJEDetailCard 
-                                  key={aje.aje_id || idx} 
+                                <AJEDetailCard
+                                  key={aje.aje_id || idx}
                                   aje={aje}
                                   onFindingClick={(findingId) => {
                                     const finding = findings.find((f: any) => f.finding_id === findingId);
@@ -1523,7 +1417,7 @@ export default function CompanyPage({ params }: PageProps) {
           {/* Right Panel - Chat */}
           <div className="lg:col-span-1">
             <Card className="bg-[#111111] border-[#1f1f1f] h-[700px] flex flex-col">
-              <CardHeader className="flex-shrink-0">
+              <CardHeader className="shrink-0">
                 <CardTitle className="flex items-center gap-2">
                   <MessageSquare className="h-5 w-5 text-[#00d4ff]" />
                   Auditor Assistant
@@ -1544,16 +1438,15 @@ export default function CompanyPage({ params }: PageProps) {
                     {chatMessages.map((msg, idx) => (
                       <div
                         key={idx}
-                        className={`p-3 rounded-lg ${
-                          msg.role === "user"
-                            ? "bg-[#00d4ff]/10 border border-[#00d4ff]/20 ml-4"
-                            : "bg-[#0a0a0a] border border-[#1f1f1f] mr-4"
-                        }`}
+                        className={`p-3 rounded-lg ${msg.role === "user"
+                          ? "bg-[#00d4ff]/10 border border-[#00d4ff]/20 ml-4"
+                          : "bg-[#0a0a0a] border border-[#1f1f1f] mr-4"
+                          }`}
                       >
                         <div className="text-xs text-muted-foreground mb-1">
                           {msg.role === "user" ? "You" : "Assistant"}
                         </div>
-                        <div className="text-sm break-words whitespace-pre-wrap overflow-hidden">{msg.content}</div>
+                        <div className="text-sm wrap-break-word whitespace-pre-wrap overflow-hidden">{msg.content}</div>
                       </div>
                     ))}
                     {isChatLoading && (
@@ -1566,7 +1459,7 @@ export default function CompanyPage({ params }: PageProps) {
                 </ScrollArea>
 
                 {/* Chat Input */}
-                <div className="flex gap-2 mt-4 flex-shrink-0">
+                <div className="flex gap-2 mt-4 shrink-0">
                   <Input
                     placeholder="Ask about the audit..."
                     value={chatInput}
@@ -1574,9 +1467,9 @@ export default function CompanyPage({ params }: PageProps) {
                     onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
                     className="bg-[#0a0a0a] border-[#1f1f1f]"
                   />
-                  <Button 
-                    size="icon" 
-                    onClick={sendChatMessage} 
+                  <Button
+                    size="icon"
+                    onClick={sendChatMessage}
                     disabled={isChatLoading || !chatInput.trim()}
                     className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90"
                   >
@@ -1586,169 +1479,6 @@ export default function CompanyPage({ params }: PageProps) {
               </CardContent>
             </Card>
 
-            {/* Selected Entity Card - Below Auditor Assistant */}
-            {selectedOwnershipNode && (
-              <Card className="bg-[#111111] border-[#1f1f1f] mt-4">
-                <CardHeader className="pb-2">
-                  <CardTitle className="flex items-center justify-between text-base">
-                    <div className="flex items-center gap-2">
-                      <Network className="h-4 w-4 text-[#00d4ff]" />
-                      <span className="truncate">{selectedOwnershipNode.name}</span>
-                    </div>
-                    <button
-                      onClick={() => setSelectedOwnershipNode(null)}
-                      className="text-xs text-[#666] hover:text-[#00d4ff] px-2"
-                    >
-                      X
-                    </button>
-                  </CardTitle>
-                </CardHeader>
-                <CardContent className="text-sm">
-                  {/* Data Source Badge */}
-                  <div className="flex items-center gap-2 mb-3 flex-wrap">
-                    <span className={`text-[10px] px-2 py-0.5 rounded ${
-                      selectedOwnershipNode.api_source === 'mock_demo' ? 'bg-[#666] text-white' :
-                      selectedOwnershipNode.api_source === 'opencorporates' ? 'bg-[#22c55e] text-white' :
-                      selectedOwnershipNode.api_source === 'sec_edgar' ? 'bg-[#3b82f6] text-white' :
-                      selectedOwnershipNode.api_source === 'uk_companies_house' ? 'bg-[#8b5cf6] text-white' :
-                      selectedOwnershipNode.api_source === 'gleif' ? 'bg-[#f97316] text-white' :
-                      'bg-[#444] text-white'
-                    }`}>
-                      {selectedOwnershipNode.api_source || 'Unknown Source'}
-                    </span>
-                    {selectedOwnershipNode.is_root && (
-                      <span className="text-[10px] px-2 py-0.5 rounded bg-[#10b981] text-white">Audited Company</span>
-                    )}
-                  </div>
-
-                  {/* Entity Details */}
-                  <div className="space-y-2 text-xs">
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Type:</span>
-                      <span className="capitalize text-[#fafafa]">{selectedOwnershipNode.type}</span>
-                    </div>
-                    {selectedOwnershipNode.jurisdiction && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Jurisdiction:</span>
-                        <span className="text-[#fafafa]">{selectedOwnershipNode.jurisdiction}</span>
-                      </div>
-                    )}
-                    {selectedOwnershipNode.status && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Status:</span>
-                        <span className={`${selectedOwnershipNode.status === 'active' ? 'text-[#22c55e]' : 'text-[#ff6b35]'}`}>
-                          {selectedOwnershipNode.status}
-                        </span>
-                      </div>
-                    )}
-                    {selectedOwnershipNode.registration_number && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Reg. No:</span>
-                        <span className="text-[#fafafa] font-mono text-[10px]">{selectedOwnershipNode.registration_number}</span>
-                      </div>
-                    )}
-                    {selectedOwnershipNode.lei && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">LEI:</span>
-                        <span className="text-[#fafafa] font-mono text-[10px]">{selectedOwnershipNode.lei.slice(0, 12)}...</span>
-                      </div>
-                    )}
-                    {selectedOwnershipNode.ticker && (
-                      <div className="flex justify-between">
-                        <span className="text-muted-foreground">Ticker:</span>
-                        <span className="text-[#00d4ff] font-bold">{selectedOwnershipNode.ticker}</span>
-                      </div>
-                    )}
-                  </div>
-
-                  {/* Gemini Classification */}
-                  {selectedOwnershipNode.gemini_classification && (
-                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
-                      <div className="text-[10px] text-muted-foreground mb-1">AI Classification:</div>
-                      <div className="text-xs text-[#a855f7] capitalize">{selectedOwnershipNode.gemini_classification.replace(/_/g, ' ')}</div>
-                      {selectedOwnershipNode.data_quality_score !== undefined && (
-                        <div className="flex items-center gap-2 mt-1">
-                          <span className="text-[10px] text-muted-foreground">Data Quality:</span>
-                          <div className="flex-1 bg-[#1f1f1f] rounded-full h-1.5">
-                            <div 
-                              className="bg-[#00d4ff] h-1.5 rounded-full" 
-                              style={{ width: `${selectedOwnershipNode.data_quality_score * 100}%` }}
-                            />
-                          </div>
-                          <span className="text-[10px] text-[#fafafa]">{Math.round(selectedOwnershipNode.data_quality_score * 100)}%</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-
-                  {/* Red Flags */}
-                  {selectedOwnershipNode.red_flags && selectedOwnershipNode.red_flags.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
-                      <div className="text-[10px] text-[#ff3366] font-medium mb-1">
-                        Red Flags ({selectedOwnershipNode.red_flags.length}):
-                      </div>
-                      <div className="space-y-1 max-h-24 overflow-y-auto">
-                        {selectedOwnershipNode.red_flags.map((flag, i) => (
-                          <div key={i} className="text-[10px] text-muted-foreground bg-[#1a0a0a] p-1.5 rounded border border-[#ff3366]/20">
-                            {flag}
-                          </div>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Address */}
-                  {selectedOwnershipNode.registered_address && (
-                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
-                      <div className="text-[10px] text-muted-foreground mb-1">Registered Address:</div>
-                      <div className="text-[10px] text-[#fafafa]">{selectedOwnershipNode.registered_address}</div>
-                    </div>
-                  )}
-
-                  {/* Directors */}
-                  {selectedOwnershipNode.directors && selectedOwnershipNode.directors.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
-                      <div className="text-[10px] text-muted-foreground mb-1">
-                        Directors ({selectedOwnershipNode.directors.length}):
-                      </div>
-                      <div className="space-y-1">
-                        {selectedOwnershipNode.directors.slice(0, 3).map((dir: any, i: number) => (
-                          <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
-                            <span>{dir.name}</span>
-                            {dir.role && <span className="text-muted-foreground">{dir.role}</span>}
-                          </div>
-                        ))}
-                        {selectedOwnershipNode.directors.length > 3 && (
-                          <div className="text-[10px] text-muted-foreground">+{selectedOwnershipNode.directors.length - 3} more</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Beneficial Owners */}
-                  {selectedOwnershipNode.beneficial_owners && selectedOwnershipNode.beneficial_owners.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-[#1f1f1f]">
-                      <div className="text-[10px] text-muted-foreground mb-1">
-                        Beneficial Owners ({selectedOwnershipNode.beneficial_owners.length}):
-                      </div>
-                      <div className="space-y-1">
-                        {selectedOwnershipNode.beneficial_owners.slice(0, 3).map((owner: any, i: number) => (
-                          <div key={i} className="text-[10px] text-[#fafafa] flex justify-between">
-                            <span>{owner.name}</span>
-                            {owner.ownership_percentage && (
-                              <span className="text-[#00d4ff]">{owner.ownership_percentage}%</span>
-                            )}
-                          </div>
-                        ))}
-                        {selectedOwnershipNode.beneficial_owners.length > 3 && (
-                          <div className="text-[10px] text-muted-foreground">+{selectedOwnershipNode.beneficial_owners.length - 3} more</div>
-                        )}
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
           </div>
         </div>
 
@@ -1764,7 +1494,7 @@ export default function CompanyPage({ params }: PageProps) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div 
+            <div
               ref={reasoningRef}
               className="font-mono text-sm bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f] h-32 overflow-y-auto overflow-x-hidden"
             >
@@ -1774,9 +1504,9 @@ export default function CompanyPage({ params }: PageProps) {
                   const isSuccess = step.includes("[OK]");
                   const isWarning = step.includes("[!]");
                   return (
-                    <p 
-                      key={idx} 
-                      className={`break-words whitespace-pre-wrap
+                    <p
+                      key={idx}
+                      className={`wrap-break-word whitespace-pre-wrap
                         ${isAI ? "text-[#a855f7]" : ""}
                         ${isSuccess ? "text-[#22c55e]" : ""}
                         ${isWarning ? "text-[#fbbf24]" : ""}
@@ -1808,13 +1538,13 @@ export default function CompanyPage({ params }: PageProps) {
         onOpenChange={setFindingDialogOpen}
         isAuditing={isAuditing}
       />
-      
+
       <GeminiInteractionDialog
         interaction={selectedInteraction}
         open={interactionDialogOpen}
         onOpenChange={setInteractionDialogOpen}
       />
-      
+
       <ReasoningStepDialog
         step={selectedReasoningStep}
         stepIndex={selectedReasoningIndex}
@@ -1823,18 +1553,11 @@ export default function CompanyPage({ params }: PageProps) {
         onOpenChange={setReasoningDialogOpen}
         allSteps={reasoningChain}
       />
-      
-      <QuotaExceededModal 
+
+      <QuotaExceededModal
         open={quotaExceeded}
         onClose={() => setQuotaExceeded(false)}
         onRetry={runAudit}
-        onResume={() => {
-          if (auditStatus === "quota_exceeded") {
-            resumeAudit();
-          } else if (ownershipStatus === "quota_exceeded") {
-            resumeOwnershipDiscovery();
-          }
-        }}
         operationType={ownershipStatus === "quota_exceeded" ? "ownership" : "audit"}
       />
 
@@ -1842,7 +1565,7 @@ export default function CompanyPage({ params }: PageProps) {
       {isOwnershipFullscreen && (
         <div className="fixed inset-0 z-50 bg-[#0a0a0a]">
           <div className="w-full h-full">
-            <OwnershipGraph 
+            <OwnershipGraph
               nodes={ownershipGraph?.nodes || streamingNodes.map(n => ({
                 id: n.id,
                 name: n.name,

@@ -38,6 +38,22 @@ Aurea Insight is a comprehensive AI audit platform that leverages Google's Gemin
 - Circular ownership detection
 - Common controller identification
 - Secrecy jurisdiction flagging
+- **Auto-enrichment for red flag resolution**
+
+#### Auto-Enrichment Workflow
+
+```mermaid
+graph LR
+    A[API Lookup] --> B[Gemini Classification]
+    B --> C[Auto-Enrichment]
+    C --> D{Red Flags?}
+    D -->|Resolvable| E[Web Search]
+    E --> F[Parse Results]
+    F --> G[Update Entity]
+    G --> H[Remove Flag]
+    D -->|Not Resolvable| I[Keep Flag]
+```
+
 
 ### AI Auditability
 - Complete prompt/response logging
