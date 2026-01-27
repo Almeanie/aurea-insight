@@ -21,8 +21,8 @@ interface QuotaExceededModalProps {
   operationType?: "audit" | "ownership";
 }
 
-export default function QuotaExceededModal({ 
-  open, 
+export default function QuotaExceededModal({
+  open,
   onClose,
   onRetry,
   onResume,
@@ -85,7 +85,7 @@ export default function QuotaExceededModal({
 
   return (
     <Dialog open={open} onOpenChange={(isOpen) => !isOpen && handleClose()}>
-      <DialogContent className="max-w-lg bg-[#111111] border-[#ff3366]">
+      <DialogContent className="max-w-lg bg-[#111111] border-[#ff3366] max-h-[90vh] overflow-y-auto">
         <DialogHeader>
           <div className="flex items-center gap-3">
             <div className="w-12 h-12 rounded-full bg-[#ff3366]/20 flex items-center justify-center">
@@ -123,9 +123,9 @@ export default function QuotaExceededModal({
             </h4>
             <p className="text-sm text-muted-foreground mb-3">
               You can provide your own Gemini API key to continue. Get one free at{" "}
-              <a 
-                href="https://aistudio.google.com/apikey" 
-                target="_blank" 
+              <a
+                href="https://aistudio.google.com/apikey"
+                target="_blank"
                 rel="noopener noreferrer"
                 className="text-[#00d4ff] hover:underline"
               >
@@ -186,23 +186,23 @@ export default function QuotaExceededModal({
 
           <div className="bg-[#ff3366]/10 p-4 rounded border border-[#ff3366]/30">
             <p className="text-sm">
-              <strong>Note:</strong> The core {operationType} functionality (GAAP checks, anomaly detection, 
-              fraud detection) works without AI. AI is used only for generating explanations 
+              <strong>Note:</strong> The core {operationType} functionality (GAAP checks, anomaly detection,
+              fraud detection) works without AI. AI is used only for generating explanations
               and natural language responses.
             </p>
           </div>
         </div>
 
         <DialogFooter className="gap-2">
-          <Button 
-            variant="outline" 
+          <Button
+            variant="outline"
             onClick={handleClose}
             className="border-[#1f1f1f]"
           >
             Continue Without AI
           </Button>
           {onRetry && (
-            <Button 
+            <Button
               onClick={() => {
                 onRetry();
                 handleClose();

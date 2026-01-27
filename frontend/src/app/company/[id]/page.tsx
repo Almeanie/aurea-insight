@@ -37,7 +37,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
-import { AuditProgress, OwnershipProgress } from "@/components/ui/progress";
+import { AuditProgress } from "@/components/ui/progress";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -72,11 +72,7 @@ export default function CompanyPage({ params }: PageProps) {
   const [auditStepName, setAuditStepName] = useState("");
   const [auditStatus, setAuditStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
 
-  const [ownershipProgress, setOwnershipProgress] = useState(0);
-  const [ownershipCurrentStep, setOwnershipCurrentStep] = useState(0);
-  const [ownershipTotalSteps, setOwnershipTotalSteps] = useState(10);
-  const [ownershipStepName, setOwnershipStepName] = useState("");
-  const [ownershipStatus, setOwnershipStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
+
 
   const [ownershipGraphId, setOwnershipGraphId] = useState<string | null>(null);
   const [isOwnershipFullscreen, setIsOwnershipFullscreen] = useState(false);
@@ -401,10 +397,6 @@ export default function CompanyPage({ params }: PageProps) {
 
   const discoverOwnership = async () => {
     setIsDiscoveringOwnership(true);
-    setOwnershipStatus("running");
-    setOwnershipProgress(0);
-    setOwnershipCurrentStep(0);
-    setOwnershipStepName("Initializing...");
     setStreamingNodes([]);
     setStreamingEdges([]);
     setOwnershipGraph(null);
@@ -432,36 +424,17 @@ export default function CompanyPage({ params }: PageProps) {
           try {
             const data = JSON.parse(event.data);
 
-            // Update progress info if available
-            if (data.progress_percent !== undefined) {
-              setOwnershipProgress(data.progress_percent);
-            }
-            if (data.current_step !== undefined) {
-              setOwnershipCurrentStep(data.current_step);
-            }
-            if (data.total_steps !== undefined) {
-              setOwnershipTotalSteps(data.total_steps);
-            }
-            if (data.step_name) {
-              setOwnershipStepName(data.step_name);
-            }
-            if (data.status) {
-              setOwnershipStatus(data.status as any);
-            }
-
-            // Check for quota exceeded
+            // Progress and status info handled here
             if (data.type === 'quota_exceeded' || data.status === 'quota_exceeded') {
-              setOwnershipStatus("quota_exceeded");
               setQuotaExceeded(true);
             }
 
             if (data.type === 'end' || data.type === 'completed') {
-              setOwnershipStatus("completed");
               eventSource?.close();
             } else if (data.type === 'heartbeat') {
               // Ignore heartbeats
             } else if (data.type === 'paused') {
-              setOwnershipStatus("paused");
+              // Ignore paused
             } else if (data.type === 'data' && data.data) {
               // Handle streaming graph data
               const dataType = data.data.data_type;
@@ -1015,19 +988,7 @@ export default function CompanyPage({ params }: PageProps) {
                     </Button>
                   </CardHeader>
 
-                  {/* Ownership Progress Bar */}
-                  {ownershipStatus !== "idle" && (
-                    <div className="px-6 pb-2">
-                      <OwnershipProgress
-                        isRunning={isDiscoveringOwnership}
-                        progress={ownershipProgress}
-                        currentStep={Math.max(1, Math.ceil((ownershipProgress / 100) * ownershipTotalSteps))}
-                        totalSteps={ownershipTotalSteps}
-                        stepName={ownershipStepName}
-                        status={ownershipStatus}
-                      />
-                    </div>
-                  )}
+
 
                   <CardContent className="overflow-hidden">
                     {/* Use streaming data while discovering, final graph when complete */}
@@ -1558,7 +1519,7 @@ export default function CompanyPage({ params }: PageProps) {
         open={quotaExceeded}
         onClose={() => setQuotaExceeded(false)}
         onRetry={runAudit}
-        operationType={ownershipStatus === "quota_exceeded" ? "ownership" : "audit"}
+        operationType="audit"
       />
 
       {/* Fullscreen Ownership Graph Modal */}
