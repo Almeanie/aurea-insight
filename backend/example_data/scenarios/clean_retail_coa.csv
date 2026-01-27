@@ -1,0 +1,9 @@
+code,name,type,subtype,normal_balance,description
+1000,Cash,asset,current_asset,debit,Primary operating cash account
+2000,Accounts Payable,liability,current_liability,credit,Vendor payables
+3100,Retained Earnings,equity,retained_earnings,credit,Accumulated profits
+4000,Sales Revenue,revenue,operating_revenue,credit,Retail sales income
+5000,Cost of Goods Sold,expense,cost_of_sales,debit,Direct costs of inventory sold
+6000,Salaries,expense,operating_expense,debit,Employee compensation
+6500,Utilities,expense,operating_expense,debit,Electricity water and internet
+6700,Insurance,expense,operating_expense,debit,Business insurance premiums

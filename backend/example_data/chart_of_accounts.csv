@@ -1,0 +1,28 @@
+code,name,type,subtype,normal_balance,description
+1000,Cash,asset,current_asset,debit,Primary operating cash account
+1100,Accounts Receivable,asset,current_asset,debit,Customer receivables from sales
+1200,Prepaid Insurance,asset,current_asset,debit,Prepaid insurance premiums
+1300,Office Equipment,asset,fixed_asset,debit,Computer and office equipment
+1400,Accumulated Depreciation,asset,contra_asset,credit,Accumulated depreciation on fixed assets
+2000,Accounts Payable,liability,current_liability,credit,Vendor payables
+2100,Accrued Expenses,liability,current_liability,credit,Accrued but unpaid expenses
+2200,Deferred Revenue,liability,current_liability,credit,Prepaid subscription revenue
+2300,Notes Payable,liability,long_term_liability,credit,Long-term debt obligations
+3000,Common Stock,equity,contributed_capital,credit,Shareholder equity contributions
+3100,Retained Earnings,equity,retained_earnings,credit,Accumulated profits
+3200,Dividends,equity,dividends,debit,Distributions to shareholders
+4000,Subscription Revenue,revenue,operating_revenue,credit,SaaS subscription income
+4100,Professional Services,revenue,operating_revenue,credit,Consulting and implementation services
+4200,Other Revenue,revenue,other_revenue,credit,Miscellaneous income
+5000,Cost of Goods Sold,expense,cost_of_sales,debit,Direct costs of revenue
+6000,Salaries & Wages,expense,operating_expense,debit,Employee compensation
+6100,Office Supplies,expense,operating_expense,debit,Office consumables and supplies
+6200,Marketing Expense,expense,operating_expense,debit,Advertising and marketing costs
+6300,Software & Subscriptions,expense,operating_expense,debit,Software licenses and SaaS tools
+6400,Professional Fees,expense,operating_expense,debit,Legal and accounting fees
+6500,Utilities,expense,operating_expense,debit,Electricity water and internet
+6600,Travel & Entertainment,expense,operating_expense,debit,Business travel and client entertainment
+6700,Insurance Expense,expense,operating_expense,debit,Business insurance premiums
+6800,Depreciation Expense,expense,operating_expense,debit,Periodic depreciation charges
+6900,Bank Fees,expense,operating_expense,debit,Banking and payment processing fees
+7000,Interest Expense,expense,other_expense,debit,Interest on loans and credit

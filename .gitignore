@@ -12,8 +12,9 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
-lib64/
+# Only ignore lib at repo root (Python build), not frontend/src/lib/
+/lib/
+/lib64/
 parts/
 sdist/
 var/
@@ -133,12 +134,12 @@ Thumbs.db
 # =========================
 scratchspace/
 
-# Allow frontend lib folder (utils, api clients)
-!living-ledger-auditor/frontend/src/lib/
+# /lib/ above only ignores repo-root lib; frontend/src/lib/ is tracked
 *.pdf
 *.csv
-!example_data/*.csv
-!example_data/**/*.csv
+# Required example data for other developers - do not ignore
+!backend/example_data/*.csv
+!backend/example_data/**/*.csv
 
 # Temporary files
 *.tmp

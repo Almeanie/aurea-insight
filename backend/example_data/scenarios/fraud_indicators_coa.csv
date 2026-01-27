@@ -1,0 +1,10 @@
+code,name,type,subtype,normal_balance,description
+1000,Cash,asset,current_asset,debit,Primary operating cash account
+1100,Accounts Receivable,asset,current_asset,debit,Customer receivables from sales
+2000,Accounts Payable,liability,current_liability,credit,Vendor payables
+3100,Retained Earnings,equity,retained_earnings,credit,Accumulated profits
+4000,Revenue,revenue,operating_revenue,credit,Sales and service revenue
+6000,Salaries,expense,operating_expense,debit,Employee compensation
+6100,Office Supplies,expense,operating_expense,debit,Office consumables and equipment
+6200,Marketing,expense,operating_expense,debit,Advertising and marketing costs
+6400,Consulting Fees,expense,operating_expense,debit,External consulting services

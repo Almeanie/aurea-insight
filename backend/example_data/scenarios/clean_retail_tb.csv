@@ -1,0 +1,9 @@
+account_code,account_name,debit,credit
+1000,Cash,127600.00,0
+2000,Accounts Payable,0,0
+3100,Retained Earnings,0,75000.00
+4000,Sales Revenue,0,111100.00
+5000,Cost of Goods Sold,15700.00,0
+6000,Salaries,19000.00,0
+6500,Utilities,450.00,0
+6700,Insurance,350.00,0

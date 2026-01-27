@@ -1,0 +1,9 @@
+account_code,account_name,debit,credit
+1000,Cash,0,370994.00
+1100,Accounts Receivable,700000.00,0
+3100,Retained Earnings,0,150000.00
+4000,Revenue,0,750000.00
+6000,Salaries,255000.00,0
+6100,Office Supplies,75000.00,0
+6200,Marketing,25000.00,0
+6400,Consulting Fees,249994.00,0

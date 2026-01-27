@@ -1,0 +1,37 @@
+entry_id,date,account_code,account_name,description,debit,credit,vendor_or_customer,posted_by
+SS-001,2024-01-05,1000,Cash,Seed funding round,500000.00,0,Venture Capital Fund,system
+SS-002,2024-01-05,3000,Common Stock,Seed funding investment,0,500000.00,Venture Capital Fund,system
+SS-003,2024-01-15,6000,Salaries,January payroll - 5 employees,45000.00,0,Payroll,hr
+SS-004,2024-01-15,1000,Cash,January payroll,0,45000.00,Payroll,hr
+SS-005,2024-01-20,6300,Software,AWS hosting - January,3200.00,0,Amazon Web Services,it
+SS-006,2024-01-20,1000,Cash,AWS payment,0,3200.00,Amazon Web Services,it
+SS-007,2024-02-01,1100,Accounts Receivable,First enterprise customer - annual,120000.00,0,MegaCorp Industries,sales
+SS-008,2024-02-01,2200,Deferred Revenue,Annual subscription prepayment,0,120000.00,MegaCorp Industries,sales
+SS-009,2024-02-15,6000,Salaries,February payroll,48000.00,0,Payroll,hr
+SS-010,2024-02-15,1000,Cash,February payroll,0,48000.00,Payroll,hr
+SS-011,2024-02-28,1000,Cash,Customer payment received,120000.00,0,MegaCorp Industries,ar
+SS-012,2024-02-28,1100,Accounts Receivable,Customer payment received,0,120000.00,MegaCorp Industries,ar
+SS-013,2024-03-01,2200,Deferred Revenue,Revenue recognition - March,0,10000.00,MegaCorp Industries,accounting
+SS-014,2024-03-01,4000,Subscription Revenue,Monthly revenue recognition,10000.00,0,MegaCorp Industries,accounting
+SS-015,2024-03-15,6000,Salaries,March payroll - 7 employees,63000.00,0,Payroll,hr
+SS-016,2024-03-15,1000,Cash,March payroll,0,63000.00,Payroll,hr
+SS-017,2024-03-20,6200,Marketing,Google Ads Q1 campaign,25000.00,0,Google LLC,marketing
+SS-018,2024-03-20,1000,Cash,Google Ads payment,0,25000.00,Google LLC,marketing
+SS-019,2024-04-01,2200,Deferred Revenue,Revenue recognition - April,0,10000.00,MegaCorp Industries,accounting
+SS-020,2024-04-01,4000,Subscription Revenue,Monthly revenue recognition,10000.00,0,MegaCorp Industries,accounting
+SS-021,2024-04-10,1100,Accounts Receivable,New customer - TechStart Inc,36000.00,0,TechStart Inc,sales
+SS-022,2024-04-10,4000,Subscription Revenue,Annual subscription,0,36000.00,TechStart Inc,sales
+SS-023,2024-04-15,6000,Salaries,April payroll - 8 employees,72000.00,0,Payroll,hr
+SS-024,2024-04-15,1000,Cash,April payroll,0,72000.00,Payroll,hr
+SS-025,2024-05-01,2200,Deferred Revenue,Revenue recognition - May,0,10000.00,MegaCorp Industries,accounting
+SS-026,2024-05-01,4000,Subscription Revenue,Monthly revenue recognition,10000.00,0,MegaCorp Industries,accounting
+SS-027,2024-05-15,6000,Salaries,May payroll,72000.00,0,Payroll,hr
+SS-028,2024-05-15,1000,Cash,May payroll,0,72000.00,Payroll,hr
+SS-029,2024-05-20,6100,Office Supplies,Flight to investor meeting - Delta,1800.00,0,Delta Airlines,expense
+SS-030,2024-05-20,1000,Cash,Flight expense,0,1800.00,Delta Airlines,expense
+SS-031,2024-06-01,1000,Cash,Series A funding,2000000.00,0,Growth Capital Partners,system
+SS-032,2024-06-01,3000,Common Stock,Series A investment,0,2000000.00,Growth Capital Partners,system
+SS-033,2024-06-15,6000,Salaries,June payroll - 12 employees,108000.00,0,Payroll,hr
+SS-034,2024-06-15,1000,Cash,June payroll,0,108000.00,Payroll,hr
+SS-035,2024-06-30,6200,Marketing,LinkedIn recruitment campaign,15000.00,0,LinkedIn,marketing
+SS-036,2024-06-30,2000,Accounts Payable,LinkedIn - Net 30,0,15000.00,LinkedIn,marketing

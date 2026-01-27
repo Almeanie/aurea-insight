@@ -1,0 +1,11 @@
+account_code,account_name,debit,credit
+1000,Cash,2055000.00,0
+1100,Accounts Receivable,36000.00,0
+2000,Accounts Payable,0,15000.00
+2200,Deferred Revenue,0,90000.00
+3000,Common Stock,0,2500000.00
+4000,Subscription Revenue,0,66000.00
+6000,Salaries,408000.00,0
+6100,Office Supplies,1800.00,0
+6200,Marketing,40000.00,0
+6300,Software,3200.00,0

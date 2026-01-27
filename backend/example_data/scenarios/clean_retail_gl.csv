@@ -1,0 +1,33 @@
+entry_id,date,account_code,account_name,description,debit,credit,vendor_or_customer,posted_by
+CR-001,2024-01-01,1000,Cash,Opening cash balance,75000.00,0,Opening Balance,system
+CR-002,2024-01-01,3100,Retained Earnings,Opening equity,0,75000.00,Opening Balance,system
+CR-003,2024-01-05,4000,Sales Revenue,Weekly retail sales,0,12500.00,POS System,sales
+CR-004,2024-01-05,1000,Cash,Cash sales received,12500.00,0,POS System,sales
+CR-005,2024-01-12,4000,Sales Revenue,Weekly retail sales,0,14200.00,POS System,sales
+CR-006,2024-01-12,1000,Cash,Cash sales received,14200.00,0,POS System,sales
+CR-007,2024-01-15,6000,Salaries,January payroll - 3 employees,9500.00,0,Payroll,hr
+CR-008,2024-01-15,1000,Cash,January payroll,0,9500.00,Payroll,hr
+CR-009,2024-01-19,4000,Sales Revenue,Weekly retail sales,0,11800.00,POS System,sales
+CR-010,2024-01-19,1000,Cash,Cash sales received,11800.00,0,POS System,sales
+CR-011,2024-01-20,5000,Cost of Goods Sold,Inventory purchase,8500.00,0,Wholesale Distributors,purchasing
+CR-012,2024-01-20,2000,Accounts Payable,Inventory payable,0,8500.00,Wholesale Distributors,purchasing
+CR-013,2024-01-26,4000,Sales Revenue,Weekly retail sales,0,13100.00,POS System,sales
+CR-014,2024-01-26,1000,Cash,Cash sales received,13100.00,0,POS System,sales
+CR-015,2024-01-30,2000,Accounts Payable,Pay vendor invoice,8500.00,0,Wholesale Distributors,ap
+CR-016,2024-01-30,1000,Cash,Vendor payment,0,8500.00,Wholesale Distributors,ap
+CR-017,2024-02-02,4000,Sales Revenue,Weekly retail sales,0,15600.00,POS System,sales
+CR-018,2024-02-02,1000,Cash,Cash sales received,15600.00,0,POS System,sales
+CR-019,2024-02-09,4000,Sales Revenue,Weekly retail sales,0,14800.00,POS System,sales
+CR-020,2024-02-09,1000,Cash,Cash sales received,14800.00,0,POS System,sales
+CR-021,2024-02-15,6000,Salaries,February payroll,9500.00,0,Payroll,hr
+CR-022,2024-02-15,1000,Cash,February payroll,0,9500.00,Payroll,hr
+CR-023,2024-02-16,4000,Sales Revenue,Weekly retail sales,0,12900.00,POS System,sales
+CR-024,2024-02-16,1000,Cash,Cash sales received,12900.00,0,POS System,sales
+CR-025,2024-02-20,5000,Cost of Goods Sold,Inventory restocking,7200.00,0,Wholesale Distributors,purchasing
+CR-026,2024-02-20,1000,Cash,Inventory payment - immediate,0,7200.00,Wholesale Distributors,purchasing
+CR-027,2024-02-23,4000,Sales Revenue,Weekly retail sales,0,16200.00,POS System,sales
+CR-028,2024-02-23,1000,Cash,Cash sales received,16200.00,0,POS System,sales
+CR-029,2024-02-28,6500,Utilities,Monthly utilities,450.00,0,City Utilities,facilities
+CR-030,2024-02-28,1000,Cash,Utilities payment,0,450.00,City Utilities,facilities
+CR-031,2024-03-01,6700,Insurance,Monthly insurance premium,350.00,0,Business Insurance Co,accounting
+CR-032,2024-03-01,1000,Cash,Insurance payment,0,350.00,Business Insurance Co,accounting
