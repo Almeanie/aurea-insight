@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { 
+import {
   FileText,
   ArrowUpRight,
   ArrowDownLeft,
@@ -38,18 +38,28 @@ interface AJE {
 interface AJEDetailCardProps {
   aje: AJE;
   onFindingClick?: (findingId: string) => void;
+  index?: number;
 }
 
-export default function AJEDetailCard({ aje, onFindingClick }: AJEDetailCardProps) {
+export default function AJEDetailCard({ aje, onFindingClick, index }: AJEDetailCardProps) {
   const isBalanced = aje.is_balanced ?? (aje.total_debits === aje.total_credits);
 
   return (
     <Card className="bg-[#0a0a0a] border-[#1f1f1f]">
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-base flex items-center gap-2">
-            <FileText className="h-4 w-4 text-[#00d4ff]" />
-            <span className="font-mono text-[#00d4ff]">{aje.aje_id}</span>
+          <CardTitle className="text-base flex items-center gap-3">
+            <div className="flex items-center gap-2">
+              <FileText className="h-4 w-4 text-[#00d4ff]" />
+              <span className="font-semibold text-white">
+                {index ? `AJE #${index}` : aje.aje_id}
+              </span>
+            </div>
+            {index && (
+              <span className="font-mono text-xs text-muted-foreground bg-[#1a1a1a] px-2 py-1 rounded">
+                {aje.aje_id.substring(0, 8)}...
+              </span>
+            )}
           </CardTitle>
           <div className="flex items-center gap-2">
             {isBalanced ? (
@@ -76,7 +86,7 @@ export default function AJEDetailCard({ aje, onFindingClick }: AJEDetailCardProp
         <div className="p-3 bg-[#111111] rounded border border-[#1f1f1f]">
           <p className="text-sm">{aje.description}</p>
           {aje.finding_reference && (
-            <button 
+            <button
               onClick={() => onFindingClick?.(aje.finding_reference!)}
               className="mt-2 flex items-center gap-1 text-xs text-[#00d4ff] hover:underline"
             >

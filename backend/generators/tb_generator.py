@@ -40,23 +40,44 @@ class TBGenerator:
         total_debits = 0.0
         total_credits = 0.0
         
-        for account_code in sorted(account_totals.keys()):
-            totals = account_totals[account_code]
-            account = account_map.get(account_code)
-            account_name = account.name if account else f"Unknown ({account_code})"
+        # Iterate over ALL accounts in COA to ensure completeness
+        for account in sorted(coa.accounts, key=lambda x: x.code):
+            totals = account_totals.get(account.code, {"debit": 0.0, "credit": 0.0})
             
+            beginning_balance = 0.0 # Standard for synthetic/demo unless we add seed support
             debit = totals["debit"]
             credit = totals["credit"]
             
-            # Calculate ending balance based on normal balance
-            if account and account.normal_balance == "debit":
-                ending_balance = debit - credit
-            else:
-                ending_balance = credit - debit
+            # Formula: Beginning Balance + Debit - Credit
+            ending_balance = beginning_balance + debit - credit
             
             rows.append(TrialBalanceRow(
-                account_code=account_code,
-                account_name=account_name,
+                account_code=account.code,
+                account_name=account.name,
+                beginning_balance=round(beginning_balance, 2),
+                debit=round(debit, 2),
+                credit=round(credit, 2),
+                ending_balance=round(ending_balance, 2)
+            ))
+            
+            total_debits += debit
+            total_credits += credit
+            
+        # Also catch any accounts in GL that weren't in COA (orphans)
+        coa_codes = {a.code for a in coa.accounts}
+        orphan_codes = set(account_totals.keys()) - coa_codes
+        
+        for code in sorted(list(orphan_codes)):
+            totals = account_totals[code]
+            beginning_balance = 0.0
+            debit = totals["debit"]
+            credit = totals["credit"]
+            ending_balance = beginning_balance + debit - credit
+            
+            rows.append(TrialBalanceRow(
+                account_code=code,
+                account_name=f"Unknown Account ({code})",
+                beginning_balance=round(beginning_balance, 2),
                 debit=round(debit, 2),
                 credit=round(credit, 2),
                 ending_balance=round(ending_balance, 2)

@@ -251,8 +251,24 @@ async def get_trial_balance(company_id: str):
     
     tb = companies[company_id].get("tb")
     if not tb:
-        logger.warning(f"[get_trial_balance] TB not available for company: {company_id}")
-        raise HTTPException(status_code=404, detail="Trial Balance not available")
+        # Try to derive from GL if available
+        gl = companies[company_id].get("gl")
+        coa = companies[company_id].get("coa")
+        if gl and coa:
+            logger.info(f"[get_trial_balance] deriving TB from GL for company: {company_id}")
+            from generators.tb_generator import TBGenerator
+            generator = TBGenerator()
+            tb = generator.derive_from_gl(
+                company_id=company_id,
+                gl=gl,
+                coa=coa,
+                reporting_period=companies[company_id]["metadata"].reporting_period
+            )
+            # Save it
+            companies[company_id]["tb"] = tb
+        else:
+            logger.warning(f"[get_trial_balance] TB not available and cannot derive (missing GL/COA) for company: {company_id}")
+            raise HTTPException(status_code=404, detail="Trial Balance not available")
     
     logger.info(f"[get_trial_balance] Returning TB with {len(tb.rows)} rows, balanced={tb.is_balanced}")
     return tb
@@ -381,11 +397,18 @@ async def load_scenario(scenario_id: str) -> CompanyMetadata:
                     credit = float(row['credit']) if row['credit'] else 0.0
                     total_debit += debit
                     total_credit += credit
+                    
+                    beginning_balance = 0.0
+                    # Formula: Beginning Balance + Debit - Credit
+                    ending_balance = beginning_balance + debit - credit
+                    
                     tb_rows.append(TrialBalanceRow(
                         account_code=row['account_code'],
                         account_name=row['account_name'],
+                        beginning_balance=beginning_balance,
                         debit=debit,
-                        credit=credit
+                        credit=credit,
+                        ending_balance=ending_balance
                     ))
             period_end_date = max(e.date for e in gl_entries) if gl_entries else str(datetime.now().date())
             tb = TrialBalance(

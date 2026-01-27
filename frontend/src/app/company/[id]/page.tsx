@@ -5,6 +5,12 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -688,10 +694,25 @@ export default function CompanyPage({ params }: PageProps) {
             )}
           </div>
           <div className="flex items-center gap-3">
-            <Button variant="outline" size="sm" onClick={exportPdf} disabled={!currentAuditId}>
-              <Download className="mr-2 h-4 w-4" />
-              Export PDF
-            </Button>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="outline" size="sm" disabled={!currentAuditId}>
+                  <Download className="mr-2 h-4 w-4" />
+                  Export
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={exportPdf}>
+                  Export Report (PDF)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => window.open(`http://localhost:8000/api/export/${id}/csv/ajes?audit_id=${currentAuditId}`, "_blank")}>
+                  Export AJEs (CSV)
+                </DropdownMenuItem>
+                <DropdownMenuItem onClick={() => window.open(`http://localhost:8000/api/export/${id}/xlsx/ajes?audit_id=${currentAuditId}`, "_blank")}>
+                  Export AJEs (Excel)
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90"
               size="sm"
@@ -1242,6 +1263,7 @@ export default function CompanyPage({ params }: PageProps) {
                   <TabsList className="bg-[#0a0a0a]">
                     <TabsTrigger value="coa">Chart of Accounts</TabsTrigger>
                     <TabsTrigger value="gl">General Ledger</TabsTrigger>
+                    <TabsTrigger value="tb">Trial Balance</TabsTrigger>
                     <TabsTrigger value="ajes">AJEs</TabsTrigger>
                   </TabsList>
 
@@ -1317,6 +1339,66 @@ export default function CompanyPage({ params }: PageProps) {
                     </Card>
                   </TabsContent>
 
+                  <TabsContent value="tb">
+                    <Card className="bg-[#111111] border-[#1f1f1f]">
+                      <CardHeader>
+                        <CardTitle>Trial Balance</CardTitle>
+                        <CardDescription>
+                          {tb?.rows?.length || 0} accounts | {tb?.period_end}
+                        </CardDescription>
+                      </CardHeader>
+                      <CardContent>
+                        <ScrollArea className="h-[400px]">
+                          <Table>
+                            <TableHeader>
+                              <TableRow className="border-[#1f1f1f]">
+                                <TableHead className="w-24">Account</TableHead>
+                                <TableHead>Description</TableHead>
+                                <TableHead className="text-right">Beginning Balance</TableHead>
+                                <TableHead className="text-right">Debit</TableHead>
+                                <TableHead className="text-right">Credit</TableHead>
+                                <TableHead className="text-right">Balance ({tb?.period_end})</TableHead>
+                              </TableRow>
+                            </TableHeader>
+                            <TableBody>
+                              {tb?.rows?.map((entry: any, idx: number) => (
+                                <TableRow key={idx} className="border-[#1f1f1f]">
+                                  <TableCell className="font-mono text-sm">{entry.account_code}</TableCell>
+                                  <TableCell className="text-sm">{entry.account_name}</TableCell>
+                                  <TableCell className="text-right financial-number font-mono text-muted-foreground">
+                                    {(entry.beginning_balance || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                                  </TableCell>
+                                  <TableCell className="text-right financial-number font-mono">
+                                    {entry.debit > 0 ? entry.debit.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : "-"}
+                                  </TableCell>
+                                  <TableCell className="text-right financial-number font-mono">
+                                    {entry.credit > 0 ? entry.credit.toLocaleString('en-US', { style: 'currency', currency: 'USD' }) : "-"}
+                                  </TableCell>
+                                  <TableCell className="text-right financial-number font-mono font-medium text-white">
+                                    {(entry.ending_balance || 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                                  </TableCell>
+                                </TableRow>
+                              ))}
+                              {/* Total Row */}
+                              {tb?.rows && (
+                                <TableRow className="border-[#1f1f1f] bg-[#1a1a1a] font-bold">
+                                  <TableCell colSpan={3} className="text-right">Total Activity</TableCell>
+                                  <TableCell className="text-right financial-number text-[#00d4ff]">
+                                    {tb.rows.reduce((sum: number, e: any) => sum + (e.debit || 0), 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                                  </TableCell>
+                                  <TableCell className="text-right financial-number text-[#00d4ff]">
+                                    {tb.rows.reduce((sum: number, e: any) => sum + (e.credit || 0), 0).toLocaleString('en-US', { style: 'currency', currency: 'USD' })}
+                                  </TableCell>
+                                  <TableCell></TableCell>
+                                </TableRow>
+                              )}
+                            </TableBody>
+                          </Table>
+                        </ScrollArea>
+                      </CardContent>
+                    </Card>
+                  </TabsContent>
+
                   <TabsContent value="ajes">
                     <Card className="bg-[#111111] border-[#1f1f1f]">
                       <CardHeader>
@@ -1344,6 +1426,7 @@ export default function CompanyPage({ params }: PageProps) {
                                 <AJEDetailCard
                                   key={aje.aje_id || idx}
                                   aje={aje}
+                                  index={idx + 1}
                                   onFindingClick={(findingId) => {
                                     const finding = findings.find((f: any) => f.finding_id === findingId);
                                     if (finding) {

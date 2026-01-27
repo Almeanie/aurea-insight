@@ -130,35 +130,67 @@ class GLGenerator:
             customer = random.choice(CUSTOMERS)
             amount = round(random.uniform(1000, 50000), 2)
             
-            # Debit Cash or AR, Credit Revenue
+            # 15% chance of an opposing transaction (e.g., refund or correction)
+            is_opposing = random.random() < 0.15
+            
+            # Debit Cash or AR, Credit Revenue (Normal)
+            # OR Credit Cash/AR, Debit Revenue (Opposing/Refund)
             if basis == AccountingBasis.CASH or random.random() > 0.3:
-                debit_account = "1000"  # Cash
+                cash_ar_account = "1000"  # Cash
             else:
-                debit_account = "1100"  # AR
-            
-            entries.append(JournalEntry(
-                entry_id=f"REV-{entry_id}",
-                date=date,
-                account_code=debit_account,
-                account_name=account_map.get(debit_account, {}).name if debit_account in account_map else "Cash",
-                debit=amount,
-                credit=0,
-                description=f"Payment received from {customer}",
-                vendor_or_customer=customer,
-                reference=f"INV-{random.randint(1000, 9999)}"
-            ))
-            
-            entries.append(JournalEntry(
-                entry_id=f"REV-{entry_id}",
-                date=date,
-                account_code=revenue_account,
-                account_name=account_map.get(revenue_account, {}).name if revenue_account in account_map else "Revenue",
-                debit=0,
-                credit=amount,
-                description=f"Revenue from {customer}",
-                vendor_or_customer=customer,
-                reference=f"INV-{random.randint(1000, 9999)}"
-            ))
+                cash_ar_account = "1100"  # AR
+                
+            account_name = account_map.get(cash_ar_account, {}).name if cash_ar_account in account_map else "Cash"
+            rev_account_name = account_map.get(revenue_account, {}).name if revenue_account in account_map else "Revenue"
+
+            if not is_opposing:
+                # Normal: Dr Cash, Cr Revenue
+                entries.append(JournalEntry(
+                    entry_id=f"REV-{entry_id}",
+                    date=date,
+                    account_code=cash_ar_account,
+                    account_name=account_name,
+                    debit=amount,
+                    credit=0,
+                    description=f"Payment received from {customer}",
+                    vendor_or_customer=customer,
+                    reference=f"INV-{random.randint(1000, 9999)}"
+                ))
+                entries.append(JournalEntry(
+                    entry_id=f"REV-{entry_id}",
+                    date=date,
+                    account_code=revenue_account,
+                    account_name=rev_account_name,
+                    debit=0,
+                    credit=amount,
+                    description=f"Revenue from {customer}",
+                    vendor_or_customer=customer,
+                    reference=f"INV-{random.randint(1000, 9999)}"
+                ))
+            else:
+                # Opposing: Cr Cash, Dr Revenue (Refund)
+                entries.append(JournalEntry(
+                    entry_id=f"REF-{entry_id}",
+                    date=date,
+                    account_code=revenue_account,
+                    account_name=rev_account_name,
+                    debit=amount,
+                    credit=0,
+                    description=f"Refund to {customer}",
+                    vendor_or_customer=customer,
+                    reference=f"REF-{random.randint(1000, 9999)}"
+                ))
+                entries.append(JournalEntry(
+                    entry_id=f"REF-{entry_id}",
+                    date=date,
+                    account_code=cash_ar_account,
+                    account_name=account_name,
+                    debit=0,
+                    credit=amount,
+                    description=f"Refund to {customer}",
+                    vendor_or_customer=customer,
+                    reference=f"REF-{random.randint(1000, 9999)}"
+                ))
         
         return entries
     
@@ -190,30 +222,57 @@ class GLGenerator:
             vendor = random.choice(VENDORS.get(vendor_type, ["General Vendor"]))
             amount = round(random.uniform(min_amt, max_amt), 2)
             
-            # Debit Expense, Credit Cash
-            entries.append(JournalEntry(
-                entry_id=f"EXP-{entry_id}",
-                date=date,
-                account_code=account_code,
-                account_name=account_map[account_code].name,
-                debit=amount,
-                credit=0,
-                description=f"Payment to {vendor}",
-                vendor_or_customer=vendor,
-                reference=f"CHK-{random.randint(1000, 9999)}"
-            ))
+            # 10% chance of an opposing transaction (e.g., vendor credit or correction)
+            is_opposing = random.random() < 0.10
             
-            entries.append(JournalEntry(
-                entry_id=f"EXP-{entry_id}",
-                date=date,
-                account_code="1000",
-                account_name="Cash",
-                debit=0,
-                credit=amount,
-                description=f"Payment to {vendor}",
-                vendor_or_customer=vendor,
-                reference=f"CHK-{random.randint(1000, 9999)}"
-            ))
+            if not is_opposing:
+                # Normal: Debit Expense, Credit Cash
+                entries.append(JournalEntry(
+                    entry_id=f"EXP-{entry_id}",
+                    date=date,
+                    account_code=account_code,
+                    account_name=account_map[account_code].name,
+                    debit=amount,
+                    credit=0,
+                    description=f"Payment to {vendor}",
+                    vendor_or_customer=vendor,
+                    reference=f"CHK-{random.randint(1000, 9999)}"
+                ))
+                entries.append(JournalEntry(
+                    entry_id=f"EXP-{entry_id}",
+                    date=date,
+                    account_code="1000",
+                    account_name="Cash",
+                    debit=0,
+                    credit=amount,
+                    description=f"Payment to {vendor}",
+                    vendor_or_customer=vendor,
+                    reference=f"CHK-{random.randint(1000, 9999)}"
+                ))
+            else:
+                # Opposing: Credit Expense, Debit Cash (Vendor Credit)
+                entries.append(JournalEntry(
+                    entry_id=f"CRD-{entry_id}",
+                    date=date,
+                    account_code="1000",
+                    account_name="Cash",
+                    debit=amount,
+                    credit=0,
+                    description=f"Credit from {vendor}",
+                    vendor_or_customer=vendor,
+                    reference=f"CRD-{random.randint(1000, 9999)}"
+                ))
+                entries.append(JournalEntry(
+                    entry_id=f"CRD-{entry_id}",
+                    date=date,
+                    account_code=account_code,
+                    account_name=account_map[account_code].name,
+                    debit=0,
+                    credit=amount,
+                    description=f"Credit from {vendor}",
+                    vendor_or_customer=vendor,
+                    reference=f"CRD-{random.randint(1000, 9999)}"
+                ))
         
         return entries
     

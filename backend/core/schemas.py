@@ -130,6 +130,7 @@ class TrialBalanceRow(BaseModel):
     """A single row in the Trial Balance."""
     account_code: str
     account_name: str
+    beginning_balance: float = 0
     debit: float = 0
     credit: float = 0
     ending_balance: float = 0

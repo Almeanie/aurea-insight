@@ -59,10 +59,10 @@ def generate_ajes_csv(ajes: list[dict]) -> str:
     ])
     
     # Data rows
-    for aje in ajes:
+    for idx, aje in enumerate(ajes, 1):
         for entry in aje.get("entries", []):
             writer.writerow([
-                aje.get("aje_id", ""),
+                f"AJE #{idx}",
                 aje.get("date", ""),
                 entry.get("account_code", ""),
                 entry.get("account_name", ""),

@@ -141,5 +141,21 @@ async def generate_pdf_report(
 </html>
 """
     
-    # For hackathon, return HTML as bytes (would use WeasyPrint in production)
-    return html.encode("utf-8")
+    
+    # Render HTML
+    from xhtml2pdf import pisa
+    from io import BytesIO
+    
+    # Create a PDF file
+    buffer = BytesIO()
+    pisa_status = pisa.CreatePDF(
+        src=html,
+        dest=buffer,
+        encoding='utf-8'
+    )
+    
+    if pisa_status.err:
+        return b""
+        
+    return buffer.getvalue()
+
