@@ -189,21 +189,30 @@ class GeminiClient:
                 # Log the prompt being sent (truncated for readability)
                 logger.debug(f"[generate] PROMPT PREVIEW (first 500 chars):\n{full_prompt[:500]}...")
                 
-                if self.client_type == "google_genai":
-                    # New google-genai package
-                    response = await asyncio.to_thread(
-                        self._generate_with_new_client,
-                        full_prompt,
-                        temperature,
-                        max_tokens
-                    )
-                else:
-                    # Legacy google-generativeai package
-                    response = await self._generate_with_legacy_client(
-                        full_prompt,
-                        temperature,
-                        max_tokens
-                    )
+                try:
+                    if self.client_type == "google_genai":
+                        # New google-genai package
+                        response = await asyncio.wait_for(
+                            asyncio.to_thread(
+                                self._generate_with_new_client,
+                                full_prompt,
+                                temperature,
+                                max_tokens
+                            ),
+                            timeout=15.0  # 15s timeout
+                        )
+                    else:
+                        # Legacy google-generativeai package
+                        response = await asyncio.wait_for(
+                            self._generate_with_legacy_client(
+                                full_prompt,
+                                temperature,
+                                max_tokens
+                            ),
+                            timeout=15.0  # 15s timeout
+                        )
+                except asyncio.TimeoutError:
+                    raise ValueError("Gemini API request timed out after 15 seconds")
                 
                 response_text = response
                 
@@ -246,10 +255,19 @@ class GeminiClient:
                 error_str = str(e)
                 last_error = error_str
                 
-                # Detect retryable errors (quota, rate limit, overload, etc.)
+                # Check for HARD quota limits (Resource Exhausted) -> Fail immediately, no retry
+                is_hard_quota = any(phrase in error_str.lower() for phrase in [
+                    "resource exhausted", "quota exceeded", "quota_exceeded", 
+                    "insufficient quota", "allocation exhausted"
+                ])
+                
+                if is_hard_quota:
+                    logger.error(f"[generate] Hard quota limit reached: {error_str}")
+                    break # Fail fast, do not retry
+                
+                # Detect retryable errors (Rate Limit/Soft Quota, Overload, etc.)
                 is_retryable_error = any(phrase in error_str.lower() for phrase in [
-                    "quota", "rate limit", "resource exhausted", "429", 
-                    "too many requests", "exceeded", "limit", "quota_exceeded",
+                    "rate limit", "429", "too many requests", "limit", 
                     "503", "unavailable", "overloaded", "overload", "service unavailable",
                     "500", "internal server error", "temporarily"
                 ])
@@ -276,8 +294,11 @@ class GeminiClient:
         
         # All retries failed
         error_message = f"API Error after retries: {last_error}"
-        is_retryable = any(phrase in (last_error or "").lower() for phrase in [
-            "quota", "rate", "overload", "unavailable", "503", "500"
+        
+        # Consolidate check for ANY quota/rate/capacity issue
+        is_quota_issue = any(phrase in (last_error or "").lower() for phrase in [
+            "quota", "rate", "overload", "unavailable", "503", "500", 
+            "limit", "exhausted", "429", "too many"
         ])
         
         audit_entry = self._create_audit_entry(
@@ -292,8 +313,8 @@ class GeminiClient:
         return {
             "text": None,
             "error": error_message,
-            "quota_exceeded": is_retryable,
-            "retryable": is_retryable,
+            "quota_exceeded": is_quota_issue,
+            "retryable": is_quota_issue,
             "audit": audit_entry
         }
     

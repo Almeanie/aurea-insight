@@ -1,8 +1,4 @@
-"""
-GAAP Rules Engine
-Checks compliance with Generally Accepted Accounting Principles.
-"""
-from typing import Optional
+import asyncio
 import uuid
 from loguru import logger
 
@@ -22,50 +18,37 @@ class GAAPRulesEngine:
         coa: ChartOfAccounts,
         basis: AccountingBasis
     ) -> list[dict]:
-        """Run all GAAP compliance checks."""
+        """Run all GAAP compliance checks concurrently."""
         logger.info(f"[check_compliance] Starting GAAP compliance checks for {basis} basis")
         logger.info(f"[check_compliance] GL entries: {len(gl.entries) if gl else 0}, TB rows: {len(tb.rows) if tb else 0}")
         
         findings = []
         
-        # Common rules
-        logger.info("[check_compliance] Running approval controls check")
-        approval_findings = self._check_approval_controls(gl)
-        findings.extend(approval_findings)
-        logger.info(f"[check_compliance] Approval controls: {len(approval_findings)} findings")
+        # Define tasks for common rules
+        tasks = [
+            asyncio.to_thread(self._check_approval_controls, gl),
+            asyncio.to_thread(self._check_expense_classification, gl),
+            asyncio.to_thread(self._check_documentation, gl)
+        ]
         
-        logger.info("[check_compliance] Running expense classification check")
-        classification_findings = self._check_expense_classification(gl)
-        findings.extend(classification_findings)
-        logger.info(f"[check_compliance] Expense classification: {len(classification_findings)} findings")
-        
-        logger.info("[check_compliance] Running documentation check")
-        doc_findings = self._check_documentation(gl)
-        findings.extend(doc_findings)
-        logger.info(f"[check_compliance] Documentation: {len(doc_findings)} findings")
-        
-        # Accrual-specific rules
+        # Add tasks for basis-specific rules
         if basis == AccountingBasis.ACCRUAL:
-            logger.info("[check_compliance] Running accrual-specific checks")
-            
-            rev_findings = self._check_revenue_recognition(gl)
-            findings.extend(rev_findings)
-            logger.info(f"[check_compliance] Revenue recognition: {len(rev_findings)} findings")
-            
-            matching_findings = self._check_matching_principle(gl, tb)
-            findings.extend(matching_findings)
-            logger.info(f"[check_compliance] Matching principle: {len(matching_findings)} findings")
-            
-            accrual_findings = self._check_accruals(gl, tb)
-            findings.extend(accrual_findings)
-            logger.info(f"[check_compliance] Accruals: {len(accrual_findings)} findings")
-        
-        # Cash-specific rules
+            logger.info("[check_compliance] Adding accrual-specific checks")
+            tasks.extend([
+                asyncio.to_thread(self._check_revenue_recognition, gl),
+                asyncio.to_thread(self._check_matching_principle, gl, tb),
+                asyncio.to_thread(self._check_accruals, gl, tb)
+            ])
         else:
-            logger.info("[check_compliance] Running cash basis-specific checks")
-            cash_findings = self._check_cash_basis_compliance(gl)
-            findings.extend(cash_findings)
-            logger.info(f"[check_compliance] Cash basis compliance: {len(cash_findings)} findings")
+            logger.info("[check_compliance] Adding cash basis-specific checks")
+            tasks.append(asyncio.to_thread(self._check_cash_basis_compliance, gl))
+            
+        # Run all checks in parallel
+        results = await asyncio.gather(*tasks)
+        
+        # Aggregate findings
+        for result in results:
+            findings.extend(result)
         
         logger.info(f"[check_compliance] Total GAAP findings: {len(findings)}")
         return findings

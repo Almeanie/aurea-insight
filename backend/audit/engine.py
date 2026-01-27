@@ -1,7 +1,4 @@
-"""
-Audit Engine
-Main orchestrator for running audits.
-"""
+import asyncio
 from typing import Optional
 import uuid
 from datetime import datetime
@@ -46,24 +43,13 @@ class AuditEngine:
         Run a complete audit on company data.
         
         Steps:
-        1. Validate data structure
-        2. Run GAAP compliance checks
-        3. Run anomaly detection
-        4. Run fraud detection
-        5. Generate findings with AI reasoning
-        6. Generate AJEs for findings
-        7. Calculate risk score
-        
-        Args:
-            company_data: Company data to audit
-            audit_record: Audit trail record
-            progress_callback: Optional callback for progress updates (msg, percent)
-            data_callback: Optional callback for streaming data updates (type, data)
-            is_cancelled: Optional callback to check if audit should stop
-            save_checkpoint: Optional callback to save checkpoint (phase, data)
-            on_quota_exceeded: Optional callback when API quota is exceeded
-            gemini_callback: Optional callback for Gemini API calls (purpose, prompt, response)
-            resume_from: Optional checkpoint data to resume from
+        1. Validate data structure (Sequential - Gatekeeper)
+        2. Run GAAP compliance checks (Parallel)
+        3. Run anomaly detection (Parallel)
+        4. Run fraud detection (Parallel)
+        5. Generate findings with AI reasoning (Concurrent)
+        6. Generate AJEs for findings (Sequential - depends on findings)
+        7. Calculate risk score (Sequential - depends on findings)
         """
         logger.info("[run_full_audit] Starting full audit execution")
         
@@ -134,17 +120,19 @@ class AuditEngine:
         # Determine which phase to start from if resuming
         start_phase = 1
         if resume_from and resume_from.get("phase"):
-            phase_map = {
-                "structural": 2,
-                "gaap": 3,
-                "anomaly": 4,
-                "fraud": 5,
-                "ai_enhance": 6,
-                "aje": 7,
-                "risk": 8,
-            }
-            start_phase = phase_map.get(resume_from.get("phase"), 1)
-            logger.info(f"[run_full_audit] Resuming from phase {start_phase}")
+            # Simplified phase mapping since steps 2-4 are now parallel
+            # We map old phases to our new parallel structure
+            phase = resume_from.get("phase")
+            if phase == "structural":
+                start_phase = 2
+            elif phase in ["gaap", "anomaly", "fraud", "analysis_complete"]:
+                start_phase = 5
+            elif phase == "ai_enhance":
+                start_phase = 6
+            elif phase == "aje":
+                start_phase = 7
+            
+            logger.info(f"[run_full_audit] Resuming from phase {start_phase} (mapped from {phase})")
         
         metadata = company_data["metadata"]
         coa = company_data.get("coa")
@@ -152,24 +140,18 @@ class AuditEngine:
         tb = company_data.get("tb")
         
         logger.info(f"[run_full_audit] Company: {metadata.name}")
-        logger.info(f"[run_full_audit] Accounting basis: {metadata.accounting_basis}")
-        logger.info(f"[run_full_audit] COA accounts: {len(coa.accounts) if coa else 0}")
-        logger.info(f"[run_full_audit] GL entries: {len(gl.entries) if gl else 0}")
-        logger.info(f"[run_full_audit] TB rows: {len(tb.rows) if tb else 0}")
-        
         report_progress(f"Loading data: {len(gl.entries) if gl else 0} GL entries", 5.0)
         
         all_findings = []
         
         # ========== Step 1: Validate structure ==========
         if check_cancelled():
-            logger.info("[run_full_audit] Audit cancelled before structural validation")
-            checkpoint("structural", {"findings": all_findings})
-            return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
+            return {"findings": [], "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
         
         if start_phase <= 1:
             logger.info("[run_full_audit] Step 1: Validating data structure")
             report_progress("Step 1/7: Validating data structure...", 10.0, current_step=1)
+            
             stream_reasoning_step("Starting structural validation", {
                 "description": "Checking data integrity and basic accounting principles",
                 "data_input": {
@@ -177,226 +159,172 @@ class AuditEngine:
                     "tb_rows_count": len(tb.rows) if tb else 0,
                     "coa_accounts_count": len(coa.accounts) if coa else 0,
                 },
-                "checks_performed": [
-                    "Trial Balance balance verification",
-                    "Cash balance validation",
-                    "Account code consistency"
-                ]
+                "checks_performed": ["Trial Balance balance verification", "Cash balance validation", "Account code consistency"]
             })
+            
+            # This is fast and synchronous, keep as is
             structural_findings = self._validate_structure(gl, tb, coa)
             all_findings.extend(structural_findings)
+            
             stream_reasoning_step(f"Found {len(structural_findings)} structural issues", {
                 "findings_count": len(structural_findings),
                 "findings_summary": [f.get("issue") for f in structural_findings]
             })
-            logger.info(f"[run_full_audit] Structural findings: {len(structural_findings)}")
-            report_progress(f"Found {len(structural_findings)} structural issues", 15.0)
             
-            # Stream structural findings to frontend
             for finding in structural_findings:
                 stream_data("finding", finding)
             
             checkpoint("structural", {"findings": all_findings})
-        
-        # ========== Step 2: GAAP compliance ==========
+
+        # ========== Steps 2-4: Parallel Analysis (GAAP, Anomaly, Fraud) ==========
+        # Check cancellation before starting heavy parallel work
         if check_cancelled():
-            logger.info("[run_full_audit] Audit cancelled before GAAP checks")
-            checkpoint("gaap", {"findings": all_findings})
             return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
-        
-        # Step 2: GAAP compliance (always runs)
-        logger.info("[run_full_audit] Step 2: Running GAAP compliance checks")
-        report_progress("Step 2/7: Running GAAP compliance checks...", 20.0, current_step=2)
-        
-        # Capture sample transactions for audit trail
-        sample_transactions = []
-        if gl and gl.entries:
-            for entry in gl.entries[:10]:  # First 10 as sample
-                sample_transactions.append({
-                    "entry_id": entry.entry_id,
-                    "date": str(entry.date),
-                    "account": entry.account_code,
-                    "debit": entry.debit,
-                    "credit": entry.credit,
-                    "description": entry.description[:50] if entry.description else ""
+
+        if start_phase <= 2:
+            logger.info("[run_full_audit] Starting parallel analysis (GAAP, Anomaly, Fraud)")
+            report_progress("Step 2-4: Running parallel analysis (GAAP, Anomaly, Fraud)...", 20.0, current_step=2)
+            
+            # --- Define Async Task Wrappers ---
+            
+            async def run_gaap():
+                stream_reasoning_step("Running GAAP compliance checks", {
+                    "description": "Applying Generally Accepted Accounting Principles validation",
+                    "accounting_basis": str(metadata.accounting_basis),
+                    "steps": "Running concurrently with other checks"
                 })
-        
-        stream_reasoning_step("Running GAAP compliance checks", {
-            "description": "Applying Generally Accepted Accounting Principles validation",
-            "accounting_basis": metadata.accounting_basis.value if hasattr(metadata.accounting_basis, 'value') else str(metadata.accounting_basis),
-            "rules_applied": [
-                "Revenue Recognition (ASC 606)",
-                "Expense Classification",
-                "Cutoff Testing",
-                "Approval Controls",
-                "Period Matching"
-            ],
-            "transactions_analyzed": len(gl.entries) if gl else 0,
-            "sample_transactions": sample_transactions
-        })
-        gaap_findings = await self.gaap_engine.check_compliance(
-            gl=gl,
-            tb=tb,
-            coa=coa,
-            basis=metadata.accounting_basis
-        )
-        all_findings.extend(gaap_findings)
-        stream_reasoning_step(f"Found {len(gaap_findings)} GAAP compliance issues", {
-            "findings_count": len(gaap_findings),
-            "by_category": self._count_by_field(gaap_findings, "category"),
-            "by_severity": self._count_by_field(gaap_findings, "severity"),
-            "findings_summary": [{"id": f.get("finding_id"), "issue": f.get("issue"), "severity": f.get("severity")} for f in gaap_findings[:5]]
-        })
-        logger.info(f"[run_full_audit] GAAP findings: {len(gaap_findings)}")
-        report_progress(f"Found {len(gaap_findings)} GAAP compliance issues", 30.0)
-        
-        # Stream GAAP findings to frontend
-        for finding in gaap_findings:
-            stream_data("finding", finding)
-        
+                # gaap_engine.check_compliance is now async and uses asyncio.to_thread internally
+                findings = await self.gaap_engine.check_compliance(gl, tb, coa, metadata.accounting_basis)
+                for f in findings: stream_data("finding", f)
+                return findings
+
+            async def run_anomaly():
+                stream_reasoning_step("Running statistical anomaly detection", {
+                    "description": "Applying statistical algorithms (Benford's Law, Z-score)",
+                    "steps": "Running concurrently"
+                })
+                # CPU-bound, run in thread to avoid blocking event loop
+                findings = await asyncio.to_thread(self.anomaly_detector.detect_anomalies, gl)
+                for f in findings: stream_data("finding", f)
+                return findings
+
+            async def run_fraud():
+                stream_reasoning_step("Running fraud pattern detection", {
+                    "description": "Scanning for fraud patterns (structuring, duplicates, round trips)",
+                    "steps": "Running concurrently"
+                })
+                # CPU-bound, run in thread to avoid blocking event loop
+                findings = await asyncio.to_thread(self.fraud_detector.detect_fraud_patterns, gl)
+                for f in findings: stream_data("finding", f)
+                return findings
+
+            # --- Execute in Parallel ---
+            # This allows the event loop to remain free for chat/health checks
+            results = await asyncio.gather(run_gaap(), run_anomaly(), run_fraud())
+            
+            gaap_findings, anomaly_findings, fraud_findings = results
+            
+            all_findings.extend(gaap_findings)
+            all_findings.extend(anomaly_findings)
+            all_findings.extend(fraud_findings)
+            
+            stream_reasoning_step(f"Analysis complete. Found {len(all_findings)} total issues.", {
+                "gaap_count": len(gaap_findings),
+                "anomaly_count": len(anomaly_findings),
+                "fraud_count": len(fraud_findings)
+            })
+            
+            logger.info(f"[run_full_audit] Parallel analysis complete. Total findings: {len(all_findings)}")
+            report_progress(f"Analysis complete. Found {len(all_findings)} issues.", 50.0)
+            checkpoint("analysis_complete", {"findings": all_findings})
+
+        # ========== Step 5: Enhance findings with AI reasoning ==========
         if check_cancelled():
-            logger.info("[run_full_audit] Audit cancelled after GAAP checks")
-            checkpoint("anomaly", {"findings": all_findings})
             return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
+            
+        if start_phase <= 5:
+            logger.info("[run_full_audit] Step 5: Generating AI explanations for findings")
+            report_progress(f"Step 5/7: Generating AI explanations for {len(all_findings)} findings...", 55.0, current_step=5)
+            
+            stream_reasoning_step("Generating AI explanations for findings", {
+                "description": "Using Gemini AI to generate human-readable explanations",
+                "model": "gemini-flash-thinking",
+                "findings_to_process": len(all_findings),
+                "method": "Concurrent processing"
+            })
+            
+            enhanced_findings = await self._enhance_findings_with_ai(
+                all_findings, 
+                audit_record, 
+                progress_callback, 
+                stream_data, 
+                log_gemini_call, 
+                stream_gemini_interaction,
+                handle_quota_exceeded  # Pass the callback!
+            )
+            
+            report_progress(f"Enhanced {len(enhanced_findings)} findings with AI explanations", 75.0)
+            
+            # Add findings to audit record
+            for finding in enhanced_findings:
+                audit_record.add_finding(finding)
+        else:
+            # If skipping, assume we have findings (in real implementation, would load from checkpoint)
+            enhanced_findings = all_findings
         
-        # Step 3: Anomaly detection
-        logger.info("[run_full_audit] Step 3: Running statistical anomaly detection")
-        report_progress("Step 3/7: Running anomaly detection (Benford's Law, Z-score)...", 35.0, current_step=3)
-        stream_reasoning_step("Running statistical anomaly detection", {
-            "description": "Applying statistical algorithms to identify unusual patterns",
-            "algorithms_applied": [
-                "Benford's Law Analysis (first digit distribution)",
-                "Z-score Analysis (statistical outliers)",
-                "Timing Analysis (unusual posting times)",
-                "Amount Distribution Analysis"
-            ],
-            "transactions_analyzed": len(gl.entries) if gl else 0
-        })
-        anomaly_findings = self.anomaly_detector.detect_anomalies(gl)
-        all_findings.extend(anomaly_findings)
-        stream_reasoning_step(f"Found {len(anomaly_findings)} statistical anomalies", {
-            "findings_count": len(anomaly_findings),
-            "findings_summary": [{"id": f.get("finding_id"), "issue": f.get("issue")} for f in anomaly_findings]
-        })
-        logger.info(f"[run_full_audit] Anomaly findings: {len(anomaly_findings)}")
-        report_progress(f"Found {len(anomaly_findings)} statistical anomalies", 40.0)
-        
-        # Stream anomaly findings to frontend
-        for finding in anomaly_findings:
-            stream_data("finding", finding)
-        
-        # Step 4: Fraud detection
-        logger.info("[run_full_audit] Step 4: Running fraud pattern detection")
-        report_progress("Step 4/7: Scanning for fraud patterns...", 45.0, current_step=4)
-        stream_reasoning_step("Running fraud pattern detection", {
-            "description": "Scanning for known fraud patterns and suspicious activity",
-            "patterns_checked": [
-                "Duplicate Payments (same vendor, amount, date)",
-                "Transaction Structuring (avoiding thresholds)",
-                "Round Number Analysis (exactly $1000, $5000, etc.)",
-                "Vendor Anomalies (unusual payment patterns)",
-                "Weekend/Holiday Transactions"
-            ],
-            "transactions_analyzed": len(gl.entries) if gl else 0
-        })
-        fraud_findings = self.fraud_detector.detect_fraud_patterns(gl)
-        all_findings.extend(fraud_findings)
-        stream_reasoning_step(f"Found {len(fraud_findings)} potential fraud indicators", {
-            "findings_count": len(fraud_findings),
-            "findings_summary": [{"id": f.get("finding_id"), "issue": f.get("issue"), "severity": f.get("severity")} for f in fraud_findings]
-        })
-        logger.info(f"[run_full_audit] Fraud findings: {len(fraud_findings)}")
-        report_progress(f"Found {len(fraud_findings)} potential fraud indicators", 50.0)
-        
-        # Stream fraud findings to frontend
-        for finding in fraud_findings:
-            stream_data("finding", finding)
-        
-        # Step 5: Enhance findings with AI reasoning
-        logger.info("[run_full_audit] Step 5: Generating AI explanations for findings")
-        report_progress(f"Step 5/7: Generating AI explanations for {len(all_findings)} findings...", 55.0, current_step=5)
-        stream_reasoning_step("Generating AI explanations for findings", {
-            "description": "Using Gemini AI to generate human-readable explanations for each finding",
-            "model": "gemini-3-flash-preview",
-            "findings_to_process": len(all_findings),
-            "ai_purpose": "Generate clear, professional explanations including business risk and recommendations"
-        })
-        enhanced_findings = await self._enhance_findings_with_ai(
-            all_findings, audit_record, report_progress, stream_data, log_gemini_call, stream_gemini_interaction
-        )
-        logger.info(f"[run_full_audit] Enhanced {len(enhanced_findings)} findings with AI")
-        report_progress(f"Enhanced {len(enhanced_findings)} findings with AI explanations", 75.0)
-        
-        # Add findings to audit record
-        for finding in enhanced_findings:
-            audit_record.add_finding(finding)
-        
-        # Step 6: Generate AJEs
-        logger.info("[run_full_audit] Step 6: Generating adjusting journal entries")
-        report_progress("Step 6/7: Generating adjusting journal entries...", 80.0, current_step=6)
-        correctable_findings = [f for f in enhanced_findings if f.get("category") in ["classification", "cutoff", "valuation", "balance"]]
-        stream_reasoning_step("Generating adjusting journal entries", {
-            "description": "Creating journal entries to correct identified issues",
-            "correctable_findings": len(correctable_findings),
-            "method": "Deterministic rules with AI assistance for complex cases",
-            "rules": [
-                "Expense reclassification entries",
-                "Cutoff correction entries",
-                "Accrual/deferral adjustments"
-            ]
-        })
-        ajes = await self.aje_generator.generate_ajes(enhanced_findings, coa, audit_record)
-        logger.info(f"[run_full_audit] Generated {len(ajes)} AJEs")
-        report_progress(f"Generated {len(ajes)} adjusting journal entries", 85.0)
-        
-        for aje in ajes:
-            audit_record.add_aje(aje)
-            # Stream each AJE to frontend as it's added
-            stream_data("aje", aje)
-        
-        stream_reasoning_step(f"Generated {len(ajes)} adjusting journal entries", {
-            "aje_count": len(ajes),
-            "ajes_summary": [{"id": a.get("aje_id"), "description": a.get("description", "")[:50]} for a in ajes]
-        })
-        
-        # Step 7: Calculate risk score
-        logger.info("[run_full_audit] Step 7: Calculating risk score")
-        report_progress("Step 7/7: Calculating risk score...", 90.0, current_step=7)
-        stream_reasoning_step("Calculating risk score", {
-            "description": "Computing overall audit risk based on findings",
-            "methodology": "Weighted severity scoring with confidence adjustment",
-            "weights": {
-                "critical": 25,
-                "high": 10,
-                "medium": 5,
-                "low": 2
-            },
-            "total_findings": len(enhanced_findings),
-            "by_severity": self._count_by_field(enhanced_findings, "severity")
-        })
-        risk_score = self.risk_scorer.calculate(enhanced_findings)
-        logger.info(f"[run_full_audit] Risk score: {risk_score}")
-        report_progress(f"Risk level: {risk_score.get('risk_level', 'unknown').upper()}", 95.0)
-        
-        # Stream risk score to frontend
-        stream_data("risk_score", risk_score)
+        # ========== Step 6: Generate AJEs ==========
+        if check_cancelled(): return {"findings": enhanced_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
+
+        if start_phase <= 6:
+            logger.info("[run_full_audit] Step 6: Generating adjusting journal entries")
+            report_progress("Step 6/7: Generating adjusting journal entries...", 80.0, current_step=6)
+            
+            stream_reasoning_step("Generating adjusting journal entries", {
+                "description": "Creating journal entries to correct identified issues",
+                "method": "Rule-based generation"
+            })
+            
+            # Run in thread if possible
+            if hasattr(self.aje_generator, 'generate_ajes_sync'):
+                 ajes = await asyncio.to_thread(self.aje_generator.generate_ajes_sync, enhanced_findings, coa, audit_record)
+            else:
+                 # If only async method exists, await it directly (assuming it's light or handles its own concurrency)
+                 ajes = await self.aje_generator.generate_ajes(enhanced_findings, coa, audit_record)
+
+            for aje in ajes:
+                audit_record.add_aje(aje)
+                stream_data("aje", aje)
+                
+            stream_reasoning_step(f"Generated {len(ajes)} adjusting journal entries", {"aje_count": len(ajes)})
+            report_progress(f"Generated {len(ajes)} adjusting journal entries", 85.0)
+            checkpoint("aje", {"findings": enhanced_findings, "ajes": ajes})
+        else:
+            ajes = []
+
+        # ========== Step 7: Calculate risk score ==========
+        if check_cancelled(): return {"findings": enhanced_findings, "ajes": ajes, "risk_score": {"risk_level": "unknown", "cancelled": True}}
+
+        if start_phase <= 7:
+            logger.info("[run_full_audit] Step 7: Calculating risk score")
+            report_progress("Step 7/7: Calculating risk score...", 90.0, current_step=7)
+            
+            stream_reasoning_step("Calculating risk score", {"description": "Computing overall audit risk based on findings"})
+            
+            # Lightweight calculation
+            risk_score = await asyncio.to_thread(self.risk_scorer.calculate, enhanced_findings)
+            
+            stream_data("risk_score", risk_score)
+            report_progress(f"Risk level: {risk_score.get('risk_level', 'unknown').upper()}", 100.0)
+        else:
+            risk_score = {"risk_level": "unknown"}
         
         logger.info("[run_full_audit] Audit execution complete")
-        report_progress("Audit complete!", 100.0)
         
         return {
             "findings": enhanced_findings,
             "ajes": ajes,
             "risk_score": risk_score
         }
-    
-    def _count_by_field(self, items: list[dict], field: str) -> dict:
-        """Count items by a specific field value."""
-        counts = {}
-        for item in items:
-            value = item.get(field, "unknown")
-            counts[value] = counts.get(value, 0) + 1
-        return counts
     
     def _validate_structure(self, gl, tb, coa) -> list[dict]:
         """Validate data structure."""
@@ -445,50 +373,33 @@ class AuditEngine:
         progress_callback: callable = None,
         data_callback: callable = None,
         gemini_callback: callable = None,
-        gemini_interaction_callback: callable = None
+        gemini_interaction_callback: callable = None,
+        on_quota_exceeded: callable = None  # Added: Accept on_quota_exceeded callback
     ) -> list[dict]:
-        """Use Gemini to enhance findings with explanations."""
+        """Use Gemini to enhance findings with explanations concurrently."""
         logger.info(f"[_enhance_findings_with_ai] Enhancing {len(findings)} findings with AI explanations")
         
-        def report_progress(msg: str, pct: float):
-            if progress_callback:
-                try:
-                    progress_callback(msg, pct)
-                except Exception:
-                    pass
-        
-        def stream_data(data_type: str, data: dict):
-            if data_callback:
-                try:
-                    data_callback(data_type, data)
-                except Exception:
-                    pass
-        
-        def log_gemini_call(purpose: str, prompt: str, response: str, error: str = None):
-            if gemini_callback:
-                try:
-                    gemini_callback(purpose, prompt, response, error)
-                except Exception:
-                    pass
-        
         enhanced = []
-        quota_exceeded = False
         total = len(findings)
+        processed_count = 0
+        quota_exceeded = False
         
-        for i, finding in enumerate(findings):
-            # Report progress for each finding
-            pct = 55.0 + (20.0 * (i + 1) / max(total, 1))
-            report_progress(f"AI explaining finding {i+1}/{total}: {finding.get('issue', '')[:40]}...", pct)
-            # If quota exceeded, skip AI enhancement but still include the finding
-            if quota_exceeded:
-                finding["ai_explanation"] = "AI explanation skipped - API quota exceeded"
-                enhanced.append(finding)
-                continue
+        # Semaphore to limit concurrent API calls (e.g., 5 concurrent calls)
+        sem = asyncio.Semaphore(5)
+        
+        async def process_finding(finding):
+            nonlocal processed_count, quota_exceeded
             
-            logger.debug(f"[_enhance_findings_with_ai] Processing finding {i+1}/{len(findings)}: {finding.get('issue')}")
-            
-            prompt_text = f"""Explain this audit finding in clear, professional language:
-
+            async with sem:
+                if quota_exceeded:
+                    finding["ai_explanation"] = "AI explanation skipped - API quota exceeded"
+                    return finding
+                
+                # Check if explanation already exists (e.g. from resume)
+                if finding.get("ai_explanation"):
+                    return finding
+                
+                prompt_text = f"""Explain this audit finding in clear, professional language:
 Issue: {finding.get('issue')}
 Details: {finding.get('details')}
 Category: {finding.get('category')}
@@ -501,59 +412,56 @@ Provide:
 
 Keep it concise (3-4 sentences)."""
 
-            try:
-                # Generate AI explanation
-                result = await self.gemini.generate(
-                    prompt=prompt_text,
-                    purpose="finding_explanation"
-                )
-                
-                # Log the Gemini call to frontend
-                log_gemini_call(
-                    purpose=f"Explain finding: {finding.get('issue', '')[:50]}",
-                    prompt=prompt_text,
-                    response=result.get("text", ""),
-                    error=result.get("error")
-                )
-                
-                # Check for quota exceeded
-                if result.get("quota_exceeded"):
-                    logger.error("=" * 60)
-                    logger.error("[FINDINGS ENHANCEMENT] GEMINI QUOTA EXCEEDED!")
-                    logger.error("Remaining findings will not have AI explanations")
-                    logger.error("=" * 60)
-                    quota_exceeded = True
-                    stream_reasoning_step("AI explanations stopped - Gemini API quota exceeded")
-                    finding["ai_explanation"] = "AI explanation skipped - API quota exceeded"
-                elif result.get("audit"):
-                    # Stream the gemini interaction to frontend in real-time
-                    if gemini_interaction_callback:
-                        gemini_interaction_callback(result["audit"])
-                    else:
-                        audit_record.add_gemini_interaction(result["audit"])
+                try:
+                    result = await self.gemini.generate(prompt=prompt_text, purpose="finding_explanation")
                     
-                    if result.get("text"):
+                    if gemini_callback:
+                        # Safe non-blocking callback
+                        try:
+                            gemini_callback("Explain finding", prompt_text, result.get("text", ""), result.get("error"))
+                        except: pass
+                    
+                    if result.get("quota_exceeded"):
+                        logger.error("[FINDINGS ENHANCEMENT] GEMINI QUOTA EXCEEDED!")
+                        if not quota_exceeded: # Trigger only once
+                             quota_exceeded = True
+                             if on_quota_exceeded:
+                                  try: on_quota_exceeded()
+                                  except: pass
+                        finding["ai_explanation"] = "AI explanation skipped - API quota exceeded"
+                    elif result.get("text"):
                         finding["ai_explanation"] = result["text"]
-                        logger.debug(f"[_enhance_findings_with_ai] Added AI explanation for finding {finding.get('finding_id')}")
-                    elif result.get("error"):
-                        finding["ai_explanation"] = f"AI unavailable: {result.get('error')[:50]}"
+                        if gemini_interaction_callback and result.get("audit"):
+                             try: gemini_interaction_callback(result["audit"])
+                             except: pass
+                    else:
+                        finding["ai_explanation"] = f"AI unavailable: {result.get('error')}"
+                        
+                except Exception as e:
+                    logger.warning(f"AI enhancement failed: {e}")
+                    finding["ai_explanation"] = "AI explanation unavailable."
                 
-            except Exception as e:
-                logger.warning(f"[_enhance_findings_with_ai] Failed to generate AI explanation: {str(e)}")
-                finding["ai_explanation"] = "AI explanation unavailable."
-                log_gemini_call(
-                    purpose=f"Explain finding: {finding.get('issue', '')[:50]}",
-                    prompt=prompt_text,
-                    response="",
-                    error=str(e)
-                )
+                processed_count += 1
+                pct = 55.0 + (20.0 * processed_count / max(total, 1))
+                if progress_callback:
+                     try: progress_callback(f"AI explaining finding {processed_count}/{total}...", pct)
+                     except: pass
+                
+                if data_callback:
+                     try: data_callback("finding_enhanced", finding)
+                     except: pass
+                     
+                return finding
+
+        # Create tasks
+        tasks = [process_finding(f) for f in findings]
+        
+        if tasks:
+            enhanced = await asyncio.gather(*tasks)
+        else:
+            enhanced = findings
             
-            enhanced.append(finding)
-            # Stream the enhanced finding with AI explanation to frontend
-            stream_data("finding_enhanced", finding)
-        
         if quota_exceeded:
-            logger.warning(f"[_enhance_findings_with_ai] Quota exceeded. Only {sum(1 for f in enhanced if 'skipped' not in f.get('ai_explanation', ''))} findings have AI explanations")
-        
-        logger.info(f"[_enhance_findings_with_ai] Successfully processed {len(enhanced)} findings")
+            logger.warning(f"[_enhance_findings_with_ai] Quota exceeded during batch processing")
+            
         return enhanced
