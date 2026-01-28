@@ -74,6 +74,7 @@ class GeminiClient:
         logger.info("[GeminiClient.__init__] Initializing Gemini client")
         self.api_key = api_key or settings.GEMINI_API_KEY
         self.model_name = settings.GEMINI_MODEL
+        self.search_model_name = settings.GEMINI_SEARCH_MODEL
         self.model = None
         self.client = None
         self.client_type = None
@@ -523,7 +524,7 @@ Return ONLY the code, no explanation."""
                 
                 response = await asyncio.to_thread(
                     self.client.models.generate_content,
-                    model=self.model,
+                    model=self.search_model_name,
                     contents=prompt,
                     config=self.genai_types.GenerateContentConfig(
                         temperature=0.3,

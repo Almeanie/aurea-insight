@@ -77,29 +77,7 @@ def load_chart_of_accounts_from_csv() -> list[Account]:
     return accounts
 
 
-def load_trial_balance_from_csv() -> list[TrialBalanceRow]:
-    """Load trial balance from CSV file."""
-    tb_path = EXAMPLE_DATA_PATH / "trial_balance.csv"
-    rows = []
-    
-    logger.info(f"[load_trial_balance_from_csv] Loading from {tb_path}")
-    
-    with open(tb_path, 'r', newline='', encoding='utf-8') as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            try:
-                tb_row = TrialBalanceRow(
-                    account_code=row['account_code'],
-                    account_name=row['account_name'],
-                    debit=float(row['period_debits']) if row['period_debits'] else 0.0,
-                    credit=float(row['period_credits']) if row['period_credits'] else 0.0
-                )
-                rows.append(tb_row)
-            except Exception as e:
-                logger.warning(f"[load_trial_balance_from_csv] Error parsing row: {e}")
-    
-    logger.info(f"[load_trial_balance_from_csv] Loaded {len(rows)} rows")
-    return rows
+
 
 
 def load_known_issues() -> list[dict]:
@@ -132,7 +110,6 @@ def get_example_company() -> dict:
     # Load from CSV files
     accounts = load_chart_of_accounts_from_csv()
     gl_entries = load_general_ledger_from_csv()
-    tb_rows = load_trial_balance_from_csv()
     
     # Create Chart of Accounts
     coa = ChartOfAccounts(
@@ -148,25 +125,21 @@ def get_example_company() -> dict:
         entries=gl_entries
     )
     
-    # Calculate totals for TB
-    total_debits = sum(row.debit for row in tb_rows)
-    total_credits = sum(row.credit for row in tb_rows)
-    
-    # Create Trial Balance
-    tb = TrialBalance(
+    # Derive Trial Balance from GL (Using shared logic)
+    from generators.tb_generator import TBGenerator
+    generator = TBGenerator()
+    tb = generator.derive_from_gl(
         company_id=EXAMPLE_COMPANY_ID,
-        period_end="2024-12-31",
-        rows=tb_rows,
-        total_debits=total_debits,
-        total_credits=total_credits,
-        is_balanced=abs(total_debits - total_credits) < 0.01
+        gl=gl,
+        coa=coa,
+        reporting_period="2024-12-31"
     )
     
     # Load known issues for audit validation
     injected_issues = load_known_issues()
     
     logger.info(f"[get_example_company] Loaded company: {metadata.name}")
-    logger.info(f"[get_example_company] Accounts: {len(accounts)}, GL entries: {len(gl_entries)}, TB rows: {len(tb_rows)}")
+    logger.info(f"[get_example_company] Accounts: {len(accounts)}, GL entries: {len(gl_entries)}, TB rows: {len(tb.rows)}")
     logger.info(f"[get_example_company] Known issues: {len(injected_issues)}")
     
     return {
