@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import AuditorChat from "@/components/chat/AuditorChat";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
+import { API_BASE_URL } from "@/lib/api";
 
 interface Scenario {
   id: string;
@@ -56,7 +57,7 @@ export default function Home() {
 
   // Load scenarios on mount
   useEffect(() => {
-    fetch("http://localhost:8000/api/companies/scenarios")
+    fetch(`${API_BASE_URL}/api/companies/scenarios`)
       .then(res => res.json())
       .then(data => setScenarios(data))
       .catch(err => console.error("Failed to load scenarios:", err));
@@ -66,7 +67,7 @@ export default function Home() {
     setIsGenerating(true);
     setDataSource("generate");
     try {
-      const response = await fetch("http://localhost:8000/api/companies/generate", {
+      const response = await fetch(`${API_BASE_URL}/api/companies/generate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -95,8 +96,8 @@ export default function Home() {
     setDataSource("example");
     try {
       const url = scenarioId 
-        ? `http://localhost:8000/api/companies/example?scenario_id=${scenarioId}`
-        : "http://localhost:8000/api/companies/example";
+        ? `${API_BASE_URL}/api/companies/example?scenario_id=${scenarioId}`
+        : `${API_BASE_URL}/api/companies/example`;
       const response = await fetch(url, {
         method: "POST",
       });
@@ -142,7 +143,7 @@ export default function Home() {
     formData.append("gl_file", file);
 
     try {
-      const response = await fetch("http://localhost:8000/api/companies/upload-smart", {
+      const response = await fetch(`${API_BASE_URL}/api/companies/upload-smart`, {
         method: "POST",
         body: formData
       });

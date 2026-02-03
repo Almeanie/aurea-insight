@@ -104,7 +104,7 @@ cp .env.example .env  # Linux/Mac
 # GEMINI_API_KEY=your_key_here
 
 # Run the server
-python -m uvicorn main:app --reload
+python -m uvicorn main:app --reload --port 8888
 ```
 
 ### Frontend Setup
@@ -128,8 +128,8 @@ docker-compose up --build
 
 ### Access the Application
 - Frontend: http://localhost:3000
-- Backend API: http://localhost:8000
-- API Docs: http://localhost:8000/docs
+- Backend API: http://localhost:8888
+- API Docs: http://localhost:8888/docs
 
 ## Usage
 

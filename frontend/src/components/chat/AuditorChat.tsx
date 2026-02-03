@@ -47,13 +47,14 @@ export default function AuditorChat({ companyId, auditId }: AuditorChatProps) {
     try {
       const response = await chatApi.send(userMessage, companyId, auditId);
 
-      if (response.data) {
+      const data = response.data;
+      if (data) {
         setMessages((prev) => [
           ...prev,
           {
             role: "assistant",
-            content: response.data.message,
-            citations: response.data.citations,
+            content: data.message,
+            citations: data.citations,
           },
         ]);
       } else {

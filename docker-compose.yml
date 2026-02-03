@@ -24,7 +24,7 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     ports:
-      - "8000:8000"
+      - "8888:8888"
     environment:
       DATABASE_URL: postgresql+asyncpg://postgres:postgres@db:5432/aurea_insight
       GEMINI_API_KEY: ${GEMINI_API_KEY}
@@ -34,7 +34,7 @@ services:
         condition: service_healthy
     volumes:
       - ./backend:/app
-    command: uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn main:app --host 0.0.0.0 --port 8888 --reload
 
   # Frontend
   frontend:
@@ -44,7 +44,7 @@ services:
     ports:
       - "3000:3000"
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
+      NEXT_PUBLIC_API_URL: http://localhost:8888
     depends_on:
       - backend
     volumes:

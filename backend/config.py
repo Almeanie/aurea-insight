@@ -2,8 +2,10 @@
 Aurea Insight - Configuration
 """
 from pydantic_settings import BaseSettings
+from pydantic import computed_field
 from typing import Optional
 import os
+import json
 
 
 class Settings(BaseSettings):
@@ -19,7 +21,25 @@ class Settings(BaseSettings):
     
     # API
     API_PREFIX: str = "/api"
-    CORS_ORIGINS: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
+    # Raw CORS_ORIGINS as string (comma-separated or JSON array)
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    
+    @computed_field
+    @property
+    def cors_origins_list(self) -> list[str]:
+        """Parse CORS_ORIGINS from various formats (JSON array or comma-separated)."""
+        v = self.CORS_ORIGINS
+        if not v:
+            return ["http://localhost:3000", "http://127.0.0.1:3000"]
+        # Try JSON first
+        try:
+            parsed = json.loads(v)
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            pass
+        # Fall back to comma-separated
+        return [origin.strip() for origin in v.split(",") if origin.strip()]
     
     # Database (optional for demo - can run in-memory)
     DATABASE_URL: Optional[str] = None
@@ -65,6 +85,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         case_sensitive = True
+        extra = "ignore"  # Allow extra env vars that aren't defined in Settings
 
 
 settings = Settings()

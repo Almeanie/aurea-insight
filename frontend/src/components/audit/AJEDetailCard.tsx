@@ -19,6 +19,17 @@ interface AJEEntry {
   credit: number;
 }
 
+interface TransactionDetail {
+  entry_id: string;
+  date: string;
+  account_code: string;
+  account_name: string;
+  description: string;
+  debit: number;
+  credit: number;
+  vendor?: string;
+}
+
 interface AJE {
   aje_id: string;
   date: string;
@@ -29,6 +40,10 @@ interface AJE {
   finding_reference?: string;
   rationale?: string;
   rule_applied?: string;
+  standard_reference?: string;
+  accounting_standard?: string;
+  affected_transactions?: string[];
+  transaction_details?: TransactionDetail[];
   is_balanced?: boolean;
   ai_explanation?: string;
   ai_basis?: string;
@@ -155,8 +170,54 @@ export default function AJEDetailCard({ aje, onFindingClick, index }: AJEDetailC
         {/* Rationale */}
         {aje.rationale && (
           <div className="p-3 bg-[#111111] rounded border border-[#1f1f1f] border-l-4 border-l-[#a855f7]">
-            <h5 className="text-xs font-medium text-[#a855f7] mb-1">GAAP Rationale</h5>
+            <div className="flex items-center justify-between mb-1">
+              <h5 className="text-xs font-medium text-[#a855f7]">
+                {aje.accounting_standard === "ifrs" ? "IFRS" : "GAAP"} Rationale
+              </h5>
+              {aje.standard_reference && (
+                <Badge variant="outline" className="text-xs text-[#00d4ff] border-[#00d4ff]">
+                  {aje.standard_reference}
+                </Badge>
+              )}
+            </div>
             <p className="text-sm text-muted-foreground">{aje.rationale}</p>
+          </div>
+        )}
+
+        {/* Affected Transactions */}
+        {aje.transaction_details && aje.transaction_details.length > 0 && (
+          <div className="p-3 bg-[#111111] rounded border border-[#1f1f1f]">
+            <h5 className="text-xs font-medium text-[#00d4ff] mb-2">
+              Affected Transactions ({aje.transaction_details.length})
+            </h5>
+            <div className="max-h-[200px] overflow-y-auto space-y-2">
+              {aje.transaction_details.map((tx, idx) => (
+                <div key={idx} className="flex items-center justify-between text-xs p-2 bg-[#0a0a0a] rounded">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-[#00d4ff]">{tx.entry_id}</span>
+                    <span className="text-muted-foreground">{tx.date}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono">{tx.account_code}</span>
+                    {tx.debit > 0 && <span className="text-green-400">${tx.debit.toLocaleString()}</span>}
+                    {tx.credit > 0 && <span className="text-red-400">${tx.credit.toLocaleString()}</span>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Show just IDs if no transaction details but have affected_transactions */}
+        {(!aje.transaction_details || aje.transaction_details.length === 0) && 
+          aje.affected_transactions && aje.affected_transactions.length > 0 && (
+          <div className="p-3 bg-[#111111] rounded border border-[#1f1f1f]">
+            <h5 className="text-xs font-medium text-[#00d4ff] mb-2">
+              Affected Transactions ({aje.affected_transactions.length})
+            </h5>
+            <p className="text-xs font-mono text-muted-foreground">
+              {aje.affected_transactions.join(", ")}
+            </p>
           </div>
         )}
 

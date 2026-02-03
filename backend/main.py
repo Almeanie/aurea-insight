@@ -24,8 +24,27 @@ logger.add(
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan events."""
+    import asyncio
     logger.info(f"Starting {settings.APP_NAME} v{settings.APP_VERSION}")
     logger.info(f"Debug mode: {settings.DEBUG}")
+    
+    # Pre-initialize audit engine and Gemini client in background
+    # This makes the first audit request much faster
+    async def warm_up():
+        try:
+            from audit.engine import get_audit_engine
+            logger.info("Pre-initializing audit engine...")
+            engine = get_audit_engine()
+            # Touch components to initialize them
+            _ = engine.gemini  # Initialize Gemini client
+            _ = engine.gaap_engine  # Initialize GAAP rules
+            _ = engine.ifrs_engine  # Initialize IFRS rules
+            logger.info("Audit engine pre-initialized successfully")
+        except Exception as e:
+            logger.warning(f"Audit engine warm-up failed (non-critical): {e}")
+    
+    # Run warm-up in background (don't block startup)
+    asyncio.create_task(warm_up())
     
     # Startup
     yield
@@ -47,7 +66,7 @@ app = FastAPI(
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
+    allow_origins=settings.cors_origins_list,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

@@ -10,7 +10,7 @@ import asyncio
 import json
 from loguru import logger
 
-from core.schemas import AuditFindingsResponse, AJEResponse, RiskScore
+from core.schemas import AuditFindingsResponse, AJEResponse, RiskScore, AccountingStandard
 from core.audit_trail import audit_trail
 from core.progress import progress_tracker
 
@@ -20,9 +20,15 @@ router = APIRouter()
 audit_results: dict[str, dict] = {}
 
 
-async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, resume: bool = False):
+async def _run_audit_task(
+    company_id: str, 
+    company_data: dict, 
+    audit_id: str, 
+    resume: bool = False,
+    accounting_standard: AccountingStandard = AccountingStandard.GAAP
+):
     """Background task to run the actual audit."""
-    from audit.engine import AuditEngine
+    from audit.engine import get_audit_engine
     
     try:
         # Get checkpoint data if resuming
@@ -50,11 +56,10 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
                     created_by="api"
                 )
         
-        # Initialize audit engine
-        logger.info(f"[_run_audit_task] Initializing audit engine")
-        progress_tracker.add_step(audit_id, "info", "Initializing audit engine...", progress_percent=5.0, current_step=1, step_name="Initialization")
+        # Get cached audit engine (singleton - fast!)
+        progress_tracker.add_step(audit_id, "info", "Starting audit...", progress_percent=5.0, current_step=1, step_name="Initialization")
         progress_tracker.set_total_steps(audit_id, 7)  # 7 main phases
-        engine = AuditEngine()
+        engine = get_audit_engine()
         
         # Data callback to stream findings/ajes/risk to frontend
         def data_callback(data_type: str, data: dict):
@@ -95,8 +100,9 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
             )
         
         # Run the audit
-        logger.info(f"[_run_audit_task] Running full audit...")
-        progress_tracker.add_step(audit_id, "info", "Starting GAAP compliance checks...", progress_percent=10.0, current_step=2, step_name="GAAP Compliance")
+        standard_name = "IFRS" if accounting_standard == AccountingStandard.IFRS else "US GAAP"
+        logger.info(f"[_run_audit_task] Running full audit with {standard_name} rules...")
+        progress_tracker.add_step(audit_id, "info", f"Starting {standard_name} compliance checks...", progress_percent=10.0, current_step=2, step_name=f"{standard_name} Compliance")
         
         results = await engine.run_full_audit(
             company_data=company_data,
@@ -112,7 +118,8 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
             save_checkpoint=save_checkpoint,
             on_quota_exceeded=on_quota_exceeded,
             gemini_callback=gemini_callback,
-            resume_from=checkpoint
+            resume_from=checkpoint,
+            accounting_standard=accounting_standard
         )
         
         logger.info(f"[_run_audit_task] Audit completed")
@@ -126,7 +133,8 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
             "findings": results["findings"],
             "ajes": results["ajes"],
             "risk_score": results["risk_score"],
-            "audit_trail": record
+            "audit_trail": record,
+            "accounting_standard": results.get("accounting_standard", accounting_standard.value)
         }
         
         # Finalize audit trail
@@ -154,13 +162,23 @@ async def _run_audit_task(company_id: str, company_data: dict, audit_id: str, re
 
 
 @router.post("/{company_id}/run")
-async def run_audit(company_id: str, background_tasks: BackgroundTasks):
+async def run_audit(
+    company_id: str, 
+    background_tasks: BackgroundTasks,
+    accounting_standard: AccountingStandard = AccountingStandard.GAAP
+):
     """
     Run a full audit on a company.
+    
+    Args:
+        company_id: The company to audit
+        accounting_standard: Which accounting standard to use (gaap or ifrs). Default is GAAP.
+    
     Returns immediately with audit_id so frontend can connect to SSE stream.
     The actual audit runs in the background.
     """
-    logger.info(f"[run_audit] Starting audit for company: {company_id}")
+    standard_name = "IFRS" if accounting_standard == AccountingStandard.IFRS else "US GAAP"
+    logger.info(f"[run_audit] Starting audit for company: {company_id} with {standard_name} rules")
     
     from api.routes.company import companies
     
@@ -176,19 +194,21 @@ async def run_audit(company_id: str, background_tasks: BackgroundTasks):
     
     logger.info(f"[run_audit] Created audit ID: {audit_id}")
     logger.info(f"[run_audit] Company: {company_data['metadata'].name}")
+    logger.info(f"[run_audit] Accounting Standard: {standard_name}")
     
-    progress_tracker.add_step(audit_id, "info", f"Auditing: {company_data['metadata'].name}")
+    progress_tracker.add_step(audit_id, "info", f"Auditing: {company_data['metadata'].name} using {standard_name}")
     
     # Schedule the audit to run in background
     # Use asyncio.create_task so it runs concurrently
-    asyncio.create_task(_run_audit_task(company_id, company_data, audit_id))
+    asyncio.create_task(_run_audit_task(company_id, company_data, audit_id, accounting_standard=accounting_standard))
     
     # Return immediately so frontend can connect to SSE
     return {
         "audit_id": audit_id,
         "company_id": company_id,
         "status": "running",
-        "message": "Audit started. Connect to SSE stream for live updates."
+        "accounting_standard": accounting_standard.value,
+        "message": f"Audit started with {standard_name} rules. Connect to SSE stream for live updates."
     }
 
 
@@ -452,6 +472,8 @@ async def get_finding_reasoning(company_id: str, finding_id: str, audit_id: Opti
         "ai_explanation": finding.get("ai_explanation"),
         "detection_method": finding.get("detection_method", "rule-based"),
         "gaap_principle": finding.get("gaap_principle"),
+        "ifrs_standard": finding.get("ifrs_standard"),
+        "accounting_standard_used": finding.get("accounting_standard_used"),
         "confidence": finding.get("confidence"),
         "related_ai_interactions": related_ai_interactions,
         "related_reasoning_steps": related_steps,
