@@ -13,6 +13,19 @@ from core.schemas import GeneralLedger, Severity, FindingCategory
 class AnomalyDetector:
     """Detects statistical anomalies in financial data."""
     
+    def _entry_to_transaction_detail(self, entry) -> dict:
+        """Convert a GL entry to transaction detail format for frontend display."""
+        return {
+            "entry_id": entry.entry_id,
+            "date": str(entry.date),
+            "account_code": entry.account_code,
+            "account_name": entry.account_name or entry.account_code,
+            "description": entry.description or "",
+            "debit": entry.debit,
+            "credit": entry.credit,
+            "vendor": entry.vendor_or_customer
+        }
+    
     def detect_anomalies(self, gl: GeneralLedger) -> list[dict]:
         """Run all anomaly detection algorithms."""
         logger.info("[detect_anomalies] Starting anomaly detection")
@@ -117,6 +130,7 @@ class AnomalyDetector:
                         "issue": "Statistical Outlier",
                         "details": f"Transaction of ${entry.debit:,.2f} is {abs(z_score):.1f} standard deviations from mean (${mean:,.2f})",
                         "affected_transactions": [entry.entry_id],
+                        "transaction_details": [self._entry_to_transaction_detail(entry)],
                         "recommendation": "Verify this unusual transaction amount",
                         "confidence": min(abs(z_score) / 5, 0.90),
                         "gaap_principle": "Transaction Validity",
@@ -155,6 +169,8 @@ class AnomalyDetector:
                             "severity": Severity.LOW.value,
                             "issue": "Unusual Activity Spike",
                             "details": f"Date {date} has {len(entries)} entries, significantly higher than average ({mean_count:.1f})",
+                            "affected_transactions": [e.entry_id for e in entries],
+                            "transaction_details": [self._entry_to_transaction_detail(e) for e in entries[:20]],  # Limit to 20
                             "recommendation": "Review transactions on this date for unusual patterns",
                             "confidence": 0.65,
                             "gaap_principle": "Transaction Timing",

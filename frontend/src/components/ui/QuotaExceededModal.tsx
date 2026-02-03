@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { API_BASE_URL } from "@/lib/api";
 import {
   Dialog,
   DialogContent,
@@ -45,7 +46,7 @@ export default function QuotaExceededModal({
     setErrorMessage("");
 
     try {
-      const response = await fetch("http://localhost:8000/api/settings/gemini-key", {
+      const response = await fetch(`${API_BASE_URL}/api/settings/gemini-key`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",

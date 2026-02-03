@@ -6,12 +6,25 @@ from loguru import logger
 
 from core.gemini_client import GeminiClient
 from core.audit_trail import AuditRecord
-from core.schemas import AuditFinding, Severity, FindingCategory, AccountingBasis
+from core.schemas import AuditFinding, Severity, FindingCategory, AccountingBasis, AccountingStandard
 from .gaap_rules import GAAPRulesEngine
+from .ifrs_rules import IFRSRulesEngine
 from .anomaly_detection import AnomalyDetector
 from .fraud_detection import FraudDetector
 from .aje_generator import AJEGenerator
 from .risk_scorer import RiskScorer
+
+
+# Singleton instance for reuse across audits
+_audit_engine_instance: Optional["AuditEngine"] = None
+
+
+def get_audit_engine() -> "AuditEngine":
+    """Get or create the singleton AuditEngine instance."""
+    global _audit_engine_instance
+    if _audit_engine_instance is None:
+        _audit_engine_instance = AuditEngine()
+    return _audit_engine_instance
 
 
 class AuditEngine:
@@ -19,13 +32,57 @@ class AuditEngine:
     
     def __init__(self):
         logger.info("[AuditEngine.__init__] Initializing audit engine components")
-        self.gemini = GeminiClient()
-        self.gaap_engine = GAAPRulesEngine()
-        self.anomaly_detector = AnomalyDetector()
-        self.fraud_detector = FraudDetector()
-        self.aje_generator = AJEGenerator()
-        self.risk_scorer = RiskScorer()
-        logger.info("[AuditEngine.__init__] All components initialized")
+        # Lazy initialization - components created on first use
+        self._gemini: Optional[GeminiClient] = None
+        self._gaap_engine: Optional[GAAPRulesEngine] = None
+        self._ifrs_engine: Optional[IFRSRulesEngine] = None
+        self._anomaly_detector: Optional[AnomalyDetector] = None
+        self._fraud_detector: Optional[FraudDetector] = None
+        self._aje_generator: Optional[AJEGenerator] = None
+        self._risk_scorer: Optional[RiskScorer] = None
+        logger.info("[AuditEngine.__init__] Engine created (components lazy-loaded)")
+    
+    @property
+    def gemini(self) -> GeminiClient:
+        if self._gemini is None:
+            self._gemini = GeminiClient()
+        return self._gemini
+    
+    @property
+    def gaap_engine(self) -> GAAPRulesEngine:
+        if self._gaap_engine is None:
+            self._gaap_engine = GAAPRulesEngine()
+        return self._gaap_engine
+    
+    @property
+    def ifrs_engine(self) -> IFRSRulesEngine:
+        if self._ifrs_engine is None:
+            self._ifrs_engine = IFRSRulesEngine()
+        return self._ifrs_engine
+    
+    @property
+    def anomaly_detector(self) -> AnomalyDetector:
+        if self._anomaly_detector is None:
+            self._anomaly_detector = AnomalyDetector()
+        return self._anomaly_detector
+    
+    @property
+    def fraud_detector(self) -> FraudDetector:
+        if self._fraud_detector is None:
+            self._fraud_detector = FraudDetector()
+        return self._fraud_detector
+    
+    @property
+    def aje_generator(self) -> AJEGenerator:
+        if self._aje_generator is None:
+            self._aje_generator = AJEGenerator()
+        return self._aje_generator
+    
+    @property
+    def risk_scorer(self) -> RiskScorer:
+        if self._risk_scorer is None:
+            self._risk_scorer = RiskScorer()
+        return self._risk_scorer
     
     async def run_full_audit(
         self,
@@ -37,14 +94,18 @@ class AuditEngine:
         save_checkpoint: callable = None,
         on_quota_exceeded: callable = None,
         gemini_callback: callable = None,
-        resume_from: dict = None
+        resume_from: dict = None,
+        accounting_standard: AccountingStandard = AccountingStandard.GAAP
     ) -> dict:
         """
         Run a complete audit on company data.
         
+        Args:
+            accounting_standard: Which accounting standard to use (GAAP or IFRS)
+        
         Steps:
         1. Validate data structure (Sequential - Gatekeeper)
-        2. Run GAAP compliance checks (Parallel)
+        2. Run GAAP/IFRS compliance checks (Parallel)
         3. Run anomaly detection (Parallel)
         4. Run fraud detection (Parallel)
         5. Generate findings with AI reasoning (Concurrent)
@@ -182,19 +243,27 @@ class AuditEngine:
             return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
 
         if start_phase <= 2:
-            logger.info("[run_full_audit] Starting parallel analysis (GAAP, Anomaly, Fraud)")
-            report_progress("Step 2-4: Running parallel analysis (GAAP, Anomaly, Fraud)...", 20.0, current_step=2)
+            # Determine which rules engine to use
+            standard_name = "IFRS" if accounting_standard == AccountingStandard.IFRS else "US GAAP"
+            rules_engine = self.ifrs_engine if accounting_standard == AccountingStandard.IFRS else self.gaap_engine
+            
+            logger.info(f"[run_full_audit] Starting parallel analysis ({standard_name}, Anomaly, Fraud)")
+            report_progress(f"Step 2-4: Running parallel analysis ({standard_name}, Anomaly, Fraud)...", 20.0, current_step=2)
             
             # --- Define Async Task Wrappers ---
             
-            async def run_gaap():
-                stream_reasoning_step("Running GAAP compliance checks", {
-                    "description": "Applying Generally Accepted Accounting Principles validation",
+            async def run_compliance():
+                stream_reasoning_step(f"Running {standard_name} compliance checks", {
+                    "description": f"Applying {standard_name} validation rules",
+                    "accounting_standard": standard_name,
                     "accounting_basis": str(metadata.accounting_basis),
                     "steps": "Running concurrently with other checks"
                 })
-                # gaap_engine.check_compliance is now async and uses asyncio.to_thread internally
-                findings = await self.gaap_engine.check_compliance(gl, tb, coa, metadata.accounting_basis)
+                # rules_engine.check_compliance is async and uses asyncio.to_thread internally
+                findings = await rules_engine.check_compliance(gl, tb, coa, metadata.accounting_basis)
+                # Tag findings with the accounting standard used
+                for f in findings:
+                    f["accounting_standard_used"] = accounting_standard.value
                 for f in findings: stream_data("finding", f)
                 return findings
 
@@ -220,16 +289,17 @@ class AuditEngine:
 
             # --- Execute in Parallel ---
             # This allows the event loop to remain free for chat/health checks
-            results = await asyncio.gather(run_gaap(), run_anomaly(), run_fraud())
+            results = await asyncio.gather(run_compliance(), run_anomaly(), run_fraud())
             
-            gaap_findings, anomaly_findings, fraud_findings = results
+            compliance_findings, anomaly_findings, fraud_findings = results
             
-            all_findings.extend(gaap_findings)
+            all_findings.extend(compliance_findings)
             all_findings.extend(anomaly_findings)
             all_findings.extend(fraud_findings)
             
             stream_reasoning_step(f"Analysis complete. Found {len(all_findings)} total issues.", {
-                "gaap_count": len(gaap_findings),
+                "accounting_standard": standard_name,
+                "compliance_count": len(compliance_findings),
                 "anomaly_count": len(anomaly_findings),
                 "fraud_count": len(fraud_findings)
             })
@@ -284,12 +354,12 @@ class AuditEngine:
                 "method": "Rule-based generation"
             })
             
-            # Run in thread if possible
+            # Run in thread if possible - pass accounting_standard so AJEs follow selected ruleset
             if hasattr(self.aje_generator, 'generate_ajes_sync'):
-                 ajes = await asyncio.to_thread(self.aje_generator.generate_ajes_sync, enhanced_findings, coa, audit_record)
+                 ajes = await asyncio.to_thread(self.aje_generator.generate_ajes_sync, enhanced_findings, coa, audit_record, accounting_standard)
             else:
                  # If only async method exists, await it directly (assuming it's light or handles its own concurrency)
-                 ajes = await self.aje_generator.generate_ajes(enhanced_findings, coa, audit_record)
+                 ajes = await self.aje_generator.generate_ajes(enhanced_findings, coa, audit_record, accounting_standard)
 
             for aje in ajes:
                 audit_record.add_aje(aje)
@@ -323,7 +393,8 @@ class AuditEngine:
         return {
             "findings": enhanced_findings,
             "ajes": ajes,
-            "risk_score": risk_score
+            "risk_score": risk_score,
+            "accounting_standard": accounting_standard.value
         }
     
     def _validate_structure(self, gl, tb, coa) -> list[dict]:

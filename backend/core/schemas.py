@@ -16,6 +16,12 @@ class AccountingBasis(str, Enum):
     ACCRUAL = "accrual"
 
 
+class AccountingStandard(str, Enum):
+    """Accounting standard framework to use for audit rules."""
+    GAAP = "gaap"  # US Generally Accepted Accounting Principles
+    IFRS = "ifrs"  # International Financial Reporting Standards
+
+
 class Industry(str, Enum):
     SAAS = "saas"
     AGENCY = "agency"
@@ -160,7 +166,9 @@ class AuditFinding(BaseModel):
     details: str
     affected_transactions: list[str] = []  # Entry IDs
     affected_accounts: list[str] = []  # Account codes
-    gaap_principle: Optional[str] = None
+    gaap_principle: Optional[str] = None  # US GAAP reference (e.g., "ASC 606")
+    ifrs_standard: Optional[str] = None  # IFRS reference (e.g., "IFRS 15")
+    accounting_standard_used: Optional[str] = None  # "gaap" or "ifrs"
     recommendation: str
     confidence: float = Field(default=0.8, ge=0, le=1)  # AI confidence score
     evidence: list[str] = []  # Supporting evidence

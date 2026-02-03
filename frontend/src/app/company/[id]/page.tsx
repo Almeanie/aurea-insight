@@ -15,6 +15,13 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import OwnershipGraph, { EntityNode } from "@/components/ownership/OwnershipGraph";
 import FindingDetailDialog from "@/components/audit/FindingDetailDialog";
 import GeminiInteractionDialog from "@/components/audit/GeminiInteractionDialog";
@@ -44,6 +51,7 @@ import {
 import Link from "next/link";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
 import { AuditProgress } from "@/components/ui/progress";
+import { API_BASE_URL } from "@/lib/api";
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -77,6 +85,10 @@ export default function CompanyPage({ params }: PageProps) {
   const [auditTotalSteps, setAuditTotalSteps] = useState(8);
   const [auditStepName, setAuditStepName] = useState("");
   const [auditStatus, setAuditStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
+  
+  // Accounting standard selection (GAAP or IFRS)
+  const [accountingStandard, setAccountingStandard] = useState<"gaap" | "ifrs">("gaap");
+  const [auditAccountingStandard, setAuditAccountingStandard] = useState<string | null>(null);
 
 
 
@@ -120,10 +132,10 @@ export default function CompanyPage({ params }: PageProps) {
   const fetchCompanyData = async () => {
     try {
       const [companyRes, coaRes, glRes, tbRes] = await Promise.all([
-        fetch(`http://localhost:8000/api/companies/${id}`),
-        fetch(`http://localhost:8000/api/companies/${id}/coa`),
-        fetch(`http://localhost:8000/api/companies/${id}/gl`),
-        fetch(`http://localhost:8000/api/companies/${id}/tb`)
+        fetch(`${API_BASE_URL}/api/companies/${id}`),
+        fetch(`${API_BASE_URL}/api/companies/${id}/coa`),
+        fetch(`${API_BASE_URL}/api/companies/${id}/gl`),
+        fetch(`${API_BASE_URL}/api/companies/${id}/tb`)
       ]);
 
       if (companyRes.ok) setCompany(await companyRes.json());
@@ -169,7 +181,8 @@ export default function CompanyPage({ params }: PageProps) {
     setStreamingReasoningChain([]);
     setStreamingGeminiInteractions([]);
 
-    addReasoningStep("Initializing audit engine...", "info");
+    const standardName = accountingStandard === "ifrs" ? "IFRS" : "US GAAP";
+    addReasoningStep(`Initializing audit engine with ${standardName} rules...`, "info");
 
     // Generate a temporary audit ID for early SSE connection
     // We'll get the real one from the POST response
@@ -177,8 +190,8 @@ export default function CompanyPage({ params }: PageProps) {
     let auditId: string | null = null;
 
     try {
-      // Start the audit - this returns quickly with the audit_id
-      const response = await fetch(`http://localhost:8000/api/audit/${id}/run`, {
+      // Start the audit with selected accounting standard - this returns quickly with the audit_id
+      const response = await fetch(`${API_BASE_URL}/api/audit/${id}/run?accounting_standard=${accountingStandard}`, {
         method: "POST"
       });
 
@@ -186,10 +199,12 @@ export default function CompanyPage({ params }: PageProps) {
         const result = await response.json();
         auditId = result.audit_id;
         setCurrentAuditId(auditId);
+        // Store which accounting standard was used for this audit
+        setAuditAccountingStandard(result.accounting_standard || accountingStandard);
 
         // Connect to SSE stream for live updates
         // The backend's subscribe() method will send all existing progress
-        eventSource = new EventSource(`http://localhost:8000/api/audit/${id}/stream/${auditId}`);
+        eventSource = new EventSource(`${API_BASE_URL}/api/audit/${id}/stream/${auditId}`);
 
         eventSource.onmessage = (event) => {
           try {
@@ -348,10 +363,10 @@ export default function CompanyPage({ params }: PageProps) {
 
         // Fetch full results
         const [findingsData, ajesData, riskData, trailData] = await Promise.all([
-          safeFetch(`http://localhost:8000/api/audit/${id}/findings?audit_id=${auditId}`, "findings"),
-          safeFetch(`http://localhost:8000/api/audit/${id}/ajes?audit_id=${auditId}`, "AJEs"),
-          safeFetch(`http://localhost:8000/api/audit/${id}/risk-score?audit_id=${auditId}`, "risk score"),
-          safeFetch(`http://localhost:8000/api/audit/${id}/trail?audit_id=${auditId}`, "audit trail")
+          safeFetch(`${API_BASE_URL}/api/audit/${id}/findings?audit_id=${auditId}`, "findings"),
+          safeFetch(`${API_BASE_URL}/api/audit/${id}/ajes?audit_id=${auditId}`, "AJEs"),
+          safeFetch(`${API_BASE_URL}/api/audit/${id}/risk-score?audit_id=${auditId}`, "risk score"),
+          safeFetch(`${API_BASE_URL}/api/audit/${id}/trail?audit_id=${auditId}`, "audit trail")
         ]);
 
         setAuditResults({
@@ -389,11 +404,23 @@ export default function CompanyPage({ params }: PageProps) {
 
         addReasoningStep("Audit complete. Review the tabs for details.", "success");
       } else {
-        addReasoningStep("Audit request failed. Check backend logs.", "warning");
+        // Audit failed to start - reset progress state
+        const errorData = await response.json().catch(() => ({}));
+        const errorMessage = errorData.detail || `HTTP ${response.status}`;
+        addReasoningStep(`Audit request failed: ${errorMessage}`, "warning");
+        setAuditStatus("idle");
+        setAuditProgress(0);
+        setAuditCurrentStep(0);
+        setAuditStepName("");
       }
     } catch (error) {
       addReasoningStep(`Error during audit: ${error}`, "warning");
       console.error("Audit error:", error);
+      // Reset progress state on error
+      setAuditStatus("idle");
+      setAuditProgress(0);
+      setAuditCurrentStep(0);
+      setAuditStepName("");
     } finally {
       setIsAuditing(false);
     }
@@ -415,7 +442,7 @@ export default function CompanyPage({ params }: PageProps) {
 
     try {
       // Start the discovery - returns immediately now
-      const response = await fetch(`http://localhost:8000/api/ownership/analyze-vendors/${id}`, {
+      const response = await fetch(`${API_BASE_URL}/api/ownership/analyze-vendors/${id}`, {
         method: "POST"
       });
 
@@ -424,7 +451,7 @@ export default function CompanyPage({ params }: PageProps) {
         addReasoningStep(`Analyzing ${result.vendors_analyzed} vendors...`, "info");
 
         // Connect to SSE stream for live updates
-        eventSource = new EventSource(`http://localhost:8000/api/ownership/stream/${graphId}`);
+        eventSource = new EventSource(`${API_BASE_URL}/api/ownership/stream/${graphId}`);
 
         eventSource.onmessage = (event) => {
           try {
@@ -519,7 +546,7 @@ export default function CompanyPage({ params }: PageProps) {
 
         // Fetch the final graph data
         addReasoningStep("Fetching complete ownership graph...", "info");
-        const graphRes = await fetch(`http://localhost:8000/api/ownership/graph/${graphId}`);
+        const graphRes = await fetch(`${API_BASE_URL}/api/ownership/graph/${graphId}`);
         if (graphRes.ok) {
           const graphData = await graphRes.json();
           setOwnershipGraph(graphData);
@@ -527,7 +554,7 @@ export default function CompanyPage({ params }: PageProps) {
         }
 
         // Fetch final findings
-        const findingsRes = await fetch(`http://localhost:8000/api/ownership/graph/${graphId}/findings`);
+        const findingsRes = await fetch(`${API_BASE_URL}/api/ownership/graph/${graphId}/findings`);
         if (findingsRes.ok) {
           const findingsData = await findingsRes.json();
           setOwnershipFindings(findingsData.findings || []);
@@ -558,7 +585,7 @@ export default function CompanyPage({ params }: PageProps) {
     setIsChatLoading(true);
 
     try {
-      const response = await fetch("http://localhost:8000/api/chat/", {
+      const response = await fetch(`${API_BASE_URL}/api/chat/`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -586,7 +613,7 @@ export default function CompanyPage({ params }: PageProps) {
       alert("Please run an audit first.");
       return;
     }
-    window.open(`http://localhost:8000/api/export/${id}/pdf?audit_id=${currentAuditId}`, "_blank");
+    window.open(`${API_BASE_URL}/api/export/${id}/pdf?audit_id=${currentAuditId}`, "_blank");
   };
 
   // === MEMOIZED DATA MERGES (must be before any early returns for hooks rules) ===
@@ -705,14 +732,31 @@ export default function CompanyPage({ params }: PageProps) {
                 <DropdownMenuItem onClick={exportPdf}>
                   Export Report (PDF)
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => window.open(`http://localhost:8000/api/export/${id}/csv/ajes?audit_id=${currentAuditId}`, "_blank")}>
+                <DropdownMenuItem onClick={() => window.open(`${API_BASE_URL}/api/export/${id}/csv/ajes?audit_id=${currentAuditId}`, "_blank")}>
                   Export AJEs (CSV)
                 </DropdownMenuItem>
-                <DropdownMenuItem onClick={() => window.open(`http://localhost:8000/api/export/${id}/xlsx/ajes?audit_id=${currentAuditId}`, "_blank")}>
+                <DropdownMenuItem onClick={() => window.open(`${API_BASE_URL}/api/export/${id}/xlsx/ajes?audit_id=${currentAuditId}`, "_blank")}>
                   Export AJEs (Excel)
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
+            <Select
+              value={accountingStandard}
+              onValueChange={(value: "gaap" | "ifrs") => setAccountingStandard(value)}
+              disabled={isAuditing}
+            >
+              <SelectTrigger className="w-[130px] bg-[#111111] border-[#1f1f1f] text-sm text-white">
+                <SelectValue placeholder="Standard" />
+              </SelectTrigger>
+              <SelectContent 
+                className="bg-[#111111] border-[#1f1f1f] text-white z-[100] min-w-[130px]"
+                position="popper"
+                sideOffset={4}
+              >
+                <SelectItem value="gaap" className="text-white hover:bg-[#222222] focus:bg-[#222222] focus:text-white cursor-pointer py-2">US GAAP</SelectItem>
+                <SelectItem value="ifrs" className="text-white hover:bg-[#222222] focus:bg-[#222222] focus:text-white cursor-pointer py-2">IFRS</SelectItem>
+              </SelectContent>
+            </Select>
             <Button
               className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90"
               size="sm"
@@ -743,6 +787,11 @@ export default function CompanyPage({ params }: PageProps) {
         <div className="mb-6">
           <p className="text-muted-foreground">
             {company?.industry} | {company?.accounting_basis} basis | {company?.reporting_period}
+            {auditAccountingStandard && (
+              <span className="ml-2">
+                | Audit Standard: <span className="text-[#00d4ff] font-medium">{auditAccountingStandard === "ifrs" ? "IFRS" : "US GAAP"}</span>
+              </span>
+            )}
           </p>
         </div>
 
@@ -911,6 +960,12 @@ export default function CompanyPage({ params }: PageProps) {
                                   <TableCell className="max-w-[300px]">
                                     <div className="font-medium truncate">{finding.issue}</div>
                                     <div className="text-xs text-muted-foreground mt-1 line-clamp-2 overflow-hidden">{finding.details?.substring(0, 80)}...</div>
+                                    {(finding.ifrs_standard || finding.gaap_principle) && (
+                                      <div className="text-xs text-[#a855f7] mt-1 flex items-center gap-1 overflow-hidden">
+                                        <Shield className="h-3 w-3 shrink-0" />
+                                        <span className="truncate">{finding.ifrs_standard || finding.gaap_principle}</span>
+                                      </div>
+                                    )}
                                     {finding.detection_method && (
                                       <div className="text-xs text-[#00d4ff] mt-1 flex items-center gap-1 overflow-hidden">
                                         <Code className="h-3 w-3 shrink-0" />
