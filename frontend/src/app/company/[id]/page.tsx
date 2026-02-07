@@ -1032,17 +1032,17 @@ export default function CompanyPage({ params }: PageProps) {
                   </CardHeader>
                   <CardContent>
                     {findings.length > 0 ? (
-                      <ScrollArea className="max-h-[60vh]">
+                      <div className="max-h-[60vh] overflow-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
                         <Table>
                           <TableHeader>
                             <TableRow className="border-[#1f1f1f] hover:bg-transparent">
-                              <TableHead className="text-muted-foreground">Severity</TableHead>
-                              <TableHead className="text-muted-foreground">Category</TableHead>
+                              <TableHead className="text-muted-foreground whitespace-nowrap">Severity</TableHead>
+                              <TableHead className="text-muted-foreground whitespace-nowrap">Category</TableHead>
                               <TableHead className="text-muted-foreground">Issue</TableHead>
-                              <TableHead className="text-muted-foreground text-right">Txns</TableHead>
-                              <TableHead className="text-muted-foreground text-right">Amount</TableHead>
-                              <TableHead className="text-muted-foreground">Confidence</TableHead>
-                              <TableHead className="text-muted-foreground w-24">Action</TableHead>
+                              <TableHead className="text-muted-foreground text-right whitespace-nowrap">Txns</TableHead>
+                              <TableHead className="text-muted-foreground text-right whitespace-nowrap">Amount</TableHead>
+                              <TableHead className="text-muted-foreground whitespace-nowrap">Conf.</TableHead>
+                              <TableHead className="text-muted-foreground whitespace-nowrap w-20">Action</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1075,9 +1075,9 @@ export default function CompanyPage({ params }: PageProps) {
                                     </Badge>
                                   </TableCell>
                                   <TableCell className="text-muted-foreground capitalize">{finding.category}</TableCell>
-                                  <TableCell className="max-w-[300px]">
+                                  <TableCell className="max-w-[220px]">
                                     <div className="font-medium truncate">{finding.issue}</div>
-                                    <div className="text-xs text-muted-foreground mt-1 line-clamp-2 overflow-hidden">{finding.details?.substring(0, 80)}...</div>
+                                    <div className="text-xs text-muted-foreground mt-1 line-clamp-1 overflow-hidden">{finding.details?.substring(0, 60)}...</div>
                                     {(finding.ifrs_standard || finding.gaap_principle) && (
                                       <div className="text-xs text-[#a855f7] mt-1 flex items-center gap-1 overflow-hidden">
                                         <Shield className="h-3 w-3 shrink-0" />
@@ -1158,7 +1158,7 @@ export default function CompanyPage({ params }: PageProps) {
                             })}
                           </TableBody>
                         </Table>
-                      </ScrollArea>
+                      </div>
                     ) : (
                       <div className="text-center py-12 text-muted-foreground">
                         <Shield className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -1461,7 +1461,7 @@ export default function CompanyPage({ params }: PageProps) {
                         <CardDescription>{coa?.accounts?.length || 0} accounts</CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <ScrollArea className="max-h-[50vh]">
+                        <div className="max-h-[50vh] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
                           <Table>
                             <TableHeader>
                               <TableRow className="border-[#1f1f1f]">
@@ -1482,7 +1482,7 @@ export default function CompanyPage({ params }: PageProps) {
                               ))}
                             </TableBody>
                           </Table>
-                        </ScrollArea>
+                        </div>
                       </CardContent>
                     </Card>
                   </TabsContent>
