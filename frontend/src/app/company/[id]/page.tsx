@@ -1012,7 +1012,7 @@ export default function CompanyPage({ params }: PageProps) {
 
               {/* Findings Tab */}
               <TabsContent value="findings">
-                <Card className="bg-[#111111] border-[#1f1f1f]">
+                <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       Audit Findings
@@ -1643,6 +1643,54 @@ export default function CompanyPage({ params }: PageProps) {
                 </Tabs>
               </TabsContent>
             </Tabs>
+
+            {/* Live Console - inside left column so it doesn't overlap with findings */}
+            <Card className="bg-[#111111] border-[#1f1f1f] mt-4">
+              <CardHeader className="py-3">
+                <CardTitle className="flex items-center gap-2 text-sm">
+                  <TrendingUp className="h-4 w-4 text-[#00d4ff]" />
+                  Live Audit Console
+                  {isAuditing && (
+                    <Badge className="ml-2 bg-[#22c55e] animate-pulse text-xs">Running</Badge>
+                  )}
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="pt-0">
+                <div
+                  ref={reasoningRef}
+                  className="font-mono text-xs bg-[#0a0a0a] p-3 rounded border border-[#1f1f1f] h-28 overflow-y-auto overflow-x-hidden"
+                >
+                  {liveReasoningSteps.length > 0 ? (
+                    liveReasoningSteps.map((step, idx) => {
+                      const isAI = step.includes("[AI]");
+                      const isSuccess = step.includes("[OK]");
+                      const isWarning = step.includes("[!]");
+                      return (
+                        <p
+                          key={idx}
+                          className={`break-words whitespace-pre-wrap
+                            ${isAI ? "text-[#a855f7]" : ""}
+                            ${isSuccess ? "text-[#22c55e]" : ""}
+                            ${isWarning ? "text-[#fbbf24]" : ""}
+                            ${!isAI && !isSuccess && !isWarning ? "text-muted-foreground" : ""}
+                          `}
+                        >
+                          {step}
+                        </p>
+                      );
+                    })
+                  ) : (
+                    <>
+                      <p className="text-muted-foreground">{"> System ready."}</p>
+                      <p className="text-muted-foreground">{"> Click 'Run Audit' to start analysis..."}</p>
+                    </>
+                  )}
+                  {isAuditing && (
+                    <p className="text-[#00d4ff] animate-pulse">{"> Processing..."}</p>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
           </div>
 
           {/* Right Panel - Chat */}
@@ -1712,54 +1760,6 @@ export default function CompanyPage({ params }: PageProps) {
 
           </div>
         </div>
-
-        {/* Live Console */}
-        <Card className="bg-[#111111] border-[#1f1f1f] mt-6">
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <TrendingUp className="h-5 w-5 text-[#00d4ff]" />
-              Live Audit Console
-              {isAuditing && (
-                <Badge className="ml-2 bg-[#22c55e] animate-pulse">Running</Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div
-              ref={reasoningRef}
-              className="font-mono text-sm bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f] h-32 overflow-y-auto overflow-x-hidden"
-            >
-              {liveReasoningSteps.length > 0 ? (
-                liveReasoningSteps.map((step, idx) => {
-                  const isAI = step.includes("[AI]");
-                  const isSuccess = step.includes("[OK]");
-                  const isWarning = step.includes("[!]");
-                  return (
-                    <p
-                      key={idx}
-                      className={`wrap-break-word whitespace-pre-wrap
-                        ${isAI ? "text-[#a855f7]" : ""}
-                        ${isSuccess ? "text-[#22c55e]" : ""}
-                        ${isWarning ? "text-[#fbbf24]" : ""}
-                        ${!isAI && !isSuccess && !isWarning ? "text-muted-foreground" : ""}
-                      `}
-                    >
-                      {step}
-                    </p>
-                  );
-                })
-              ) : (
-                <>
-                  <p className="text-muted-foreground">{"> System ready."}</p>
-                  <p className="text-muted-foreground">{"> Click 'Run Audit' to start analysis..."}</p>
-                </>
-              )}
-              {isAuditing && (
-                <p className="text-[#00d4ff] animate-pulse">{"> Processing..."}</p>
-              )}
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       {/* Interactive Dialogs */}
