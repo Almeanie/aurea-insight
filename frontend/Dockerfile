@@ -11,11 +11,8 @@ RUN npm ci
 # Copy application code
 COPY . .
 
-# Build-time API URL (required for production; baked into client bundle)
-ARG NEXT_PUBLIC_API_URL
-ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
-
 # Production build (generates standalone output)
+# NEXT_PUBLIC_API_URL is provided via .env.production (written by CI/CD)
 RUN npm run build
 
 # --- Production stage ---
