@@ -1,0 +1,96 @@
+name: Deploy to Cloud Run
+
+on:
+  push:
+    branches: [main]
+
+env:
+  GCP_REGION: us-central1
+  BACKEND_SERVICE: aurea-insight-backend
+  FRONTEND_SERVICE: aurea-insight-frontend
+
+jobs:
+  deploy-backend:
+    name: Deploy Backend
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Write backend env-vars file
+        run: |
+          cat > /tmp/backend-env.yaml <<EOF
+          GEMINI_API_KEY: "${{ secrets.GEMINI_API_KEY }}"
+          CORS_ORIGINS: "${{ secrets.CORS_ORIGINS }}"
+          DEBUG: "false"
+          EOF
+
+      - name: Deploy backend to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.BACKEND_SERVICE }} \
+            --source ./backend \
+            --region ${{ env.GCP_REGION }} \
+            --allow-unauthenticated \
+            --env-vars-file /tmp/backend-env.yaml \
+            --memory 1Gi \
+            --cpu 1 \
+            --port 8000 \
+            --timeout 300 \
+            --quiet
+
+      - name: Show backend URL
+        run: |
+          echo "Backend URL:"
+          gcloud run services describe ${{ env.BACKEND_SERVICE }} \
+            --region ${{ env.GCP_REGION }} \
+            --format="value(status.url)"
+
+  deploy-frontend:
+    name: Deploy Frontend
+    runs-on: ubuntu-latest
+    needs: deploy-backend
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2
+        with:
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up Cloud SDK
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Deploy frontend to Cloud Run
+        run: |
+          gcloud run deploy ${{ env.FRONTEND_SERVICE }} \
+            --source ./frontend \
+            --region ${{ env.GCP_REGION }} \
+            --allow-unauthenticated \
+            --set-build-env-vars "NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}" \
+            --memory 512Mi \
+            --cpu 1 \
+            --port 8080 \
+            --timeout 60 \
+            --quiet
+
+      - name: Show frontend URL
+        run: |
+          echo "Frontend URL:"
+          gcloud run services describe ${{ env.FRONTEND_SERVICE }} \
+            --region ${{ env.GCP_REGION }} \
+            --format="value(status.url)"
