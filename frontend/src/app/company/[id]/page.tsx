@@ -49,6 +49,7 @@ import {
   Lock
 } from "lucide-react";
 import Link from "next/link";
+import { toast } from "sonner";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
 import { AuditProgress } from "@/components/ui/progress";
 import { API_BASE_URL } from "@/lib/api";
@@ -646,7 +647,7 @@ export default function CompanyPage({ params }: PageProps) {
 
   const exportPdf = () => {
     if (!currentAuditId) {
-      alert("Please run an audit first.");
+      toast.error("Please run an audit first.");
       return;
     }
     window.open(`${API_BASE_URL}/api/export/${id}/pdf?audit_id=${currentAuditId}`, "_blank");
@@ -1031,7 +1032,7 @@ export default function CompanyPage({ params }: PageProps) {
                   </CardHeader>
                   <CardContent>
                     {findings.length > 0 ? (
-                      <ScrollArea className="h-[500px]">
+                      <ScrollArea className="max-h-[60vh]">
                         <Table>
                           <TableHeader>
                             <TableRow className="border-[#1f1f1f] hover:bg-transparent">
@@ -1209,7 +1210,7 @@ export default function CompanyPage({ params }: PageProps) {
                             <span>Live: {streamingNodes.length} entities, {streamingEdges.length} relationships discovered</span>
                           </div>
                         )}
-                        <div className="max-w-full">
+                        <div className="w-full" style={{ minHeight: "400px", height: "50vh" }}>
                           <OwnershipGraph
                             nodes={(ownershipGraph?.nodes && ownershipGraph.nodes.length > 0) ? ownershipGraph.nodes : streamingNodes.map(n => ({
                               id: n.id,
@@ -1239,8 +1240,8 @@ export default function CompanyPage({ params }: PageProps) {
                               relationship: e.relationship,
                               ownership_percentage: e.percentage
                             }))}
-                            width={600}
-                            height={400}
+                            width={800}
+                            height={500}
                             onExpandClick={() => setIsOwnershipFullscreen(true)}
                             onNodeSelect={setSelectedOwnershipNode}
                             selectedNode={selectedOwnershipNode}
@@ -1303,7 +1304,7 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <ScrollArea className="h-[350px]">
+                      <ScrollArea className="max-h-[50vh]">
                         {reasoningChain.length > 0 ? (
                           <div className="space-y-2">
                             {reasoningChain.map((step: any, idx: number) => (
@@ -1358,7 +1359,7 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <ScrollArea className="h-[350px]">
+                      <ScrollArea className="max-h-[50vh]">
                         {geminiInteractions.length > 0 ? (
                           <div className="space-y-3">
                             {geminiInteractions.map((interaction: any, idx: number) => (
@@ -1460,7 +1461,7 @@ export default function CompanyPage({ params }: PageProps) {
                         <CardDescription>{coa?.accounts?.length || 0} accounts</CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <ScrollArea className="h-[400px]">
+                        <ScrollArea className="max-h-[50vh]">
                           <Table>
                             <TableHeader>
                               <TableRow className="border-[#1f1f1f]">
@@ -1493,7 +1494,7 @@ export default function CompanyPage({ params }: PageProps) {
                         <CardDescription>{gl?.entries?.length || 0} entries | {gl?.period_start} to {gl?.period_end}</CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <ScrollArea className="h-[400px]">
+                        <ScrollArea className="max-h-[50vh]">
                           <Table>
                             <TableHeader>
                               <TableRow className="border-[#1f1f1f]">
@@ -1534,7 +1535,7 @@ export default function CompanyPage({ params }: PageProps) {
                         </CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <ScrollArea className="h-[400px]">
+                        <ScrollArea className="max-h-[50vh]">
                           <Table>
                             <TableHeader>
                               <TableRow className="border-[#1f1f1f]">
@@ -1606,7 +1607,7 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardHeader>
                       <CardContent>
                         {ajes.length > 0 ? (
-                          <ScrollArea className="h-[500px]">
+                          <ScrollArea className="max-h-[60vh]">
                             <div className="space-y-4">
                               {ajes.map((aje: any, idx: number) => (
                                 <AJEDetailCard
@@ -1646,7 +1647,7 @@ export default function CompanyPage({ params }: PageProps) {
 
           {/* Right Panel - Chat */}
           <div className="lg:col-span-1">
-            <Card className="bg-[#111111] border-[#1f1f1f] h-[700px] flex flex-col">
+            <Card className="bg-[#111111] border-[#1f1f1f] max-h-[85vh] h-[700px] flex flex-col">
               <CardHeader className="shrink-0">
                 <CardTitle className="flex items-center gap-2">
                   <MessageSquare className="h-5 w-5 text-[#00d4ff]" />
@@ -1824,8 +1825,8 @@ export default function CompanyPage({ params }: PageProps) {
                 relationship: e.relationship,
                 ownership_percentage: e.percentage
               }))}
-              width={typeof window !== 'undefined' ? window.innerWidth : 1200}
-              height={typeof window !== 'undefined' ? window.innerHeight : 800}
+              width={1200}
+              height={800}
               isFullscreen={true}
               onCloseFullscreen={() => setIsOwnershipFullscreen(false)}
             />

@@ -38,16 +38,29 @@ jobs:
 
       - name: Deploy backend to Cloud Run
         run: |
-          gcloud run deploy ${{ env.BACKEND_SERVICE }} \
-            --source ./backend \
-            --region ${{ env.GCP_REGION }} \
-            --allow-unauthenticated \
-            --env-vars-file /tmp/backend-env.yaml \
-            --memory 1Gi \
-            --cpu 1 \
-            --port 8000 \
-            --timeout 300 \
-            --quiet
+          for attempt in 1 2 3; do
+            echo "Deployment attempt $attempt of 3..."
+            if gcloud run deploy ${{ env.BACKEND_SERVICE }} \
+              --source ./backend \
+              --region ${{ env.GCP_REGION }} \
+              --allow-unauthenticated \
+              --env-vars-file /tmp/backend-env.yaml \
+              --memory 1Gi \
+              --cpu 1 \
+              --port 8000 \
+              --timeout 300 \
+              --quiet; then
+              echo "Backend deployed successfully."
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Attempt $attempt failed. Retrying in 30s..."
+              sleep 30
+            else
+              echo "All 3 attempts failed."
+              exit 1
+            fi
+          done
 
       - name: Show backend URL
         run: |
@@ -77,16 +90,29 @@ jobs:
 
       - name: Deploy frontend to Cloud Run
         run: |
-          gcloud run deploy ${{ env.FRONTEND_SERVICE }} \
-            --source ./frontend \
-            --region ${{ env.GCP_REGION }} \
-            --allow-unauthenticated \
-            --set-build-env-vars "NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}" \
-            --memory 512Mi \
-            --cpu 1 \
-            --port 8080 \
-            --timeout 60 \
-            --quiet
+          for attempt in 1 2 3; do
+            echo "Deployment attempt $attempt of 3..."
+            if gcloud run deploy ${{ env.FRONTEND_SERVICE }} \
+              --source ./frontend \
+              --region ${{ env.GCP_REGION }} \
+              --allow-unauthenticated \
+              --set-build-env-vars "NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}" \
+              --memory 512Mi \
+              --cpu 1 \
+              --port 8080 \
+              --timeout 60 \
+              --quiet; then
+              echo "Frontend deployed successfully."
+              break
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              echo "Attempt $attempt failed. Retrying in 30s..."
+              sleep 30
+            else
+              echo "All 3 attempts failed."
+              exit 1
+            fi
+          done
 
       - name: Show frontend URL
         run: |

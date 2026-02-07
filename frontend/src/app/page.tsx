@@ -30,6 +30,7 @@ import {
   FileUp,
   Loader2
 } from "lucide-react";
+import { toast } from "sonner";
 import AuditorChat from "@/components/chat/AuditorChat";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
 import { API_BASE_URL } from "@/lib/api";
@@ -105,14 +106,14 @@ export default function Home() {
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
         console.error("Error loading example:", response.status, errorData);
-        alert(`Failed to load scenario: ${errorData.detail || response.statusText}`);
+        toast.error(`Failed to load scenario: ${errorData.detail || response.statusText}`);
         return;
       }
       
       const data = await response.json();
       if (!data || !data.id) {
         console.error("Invalid response - missing company ID:", data);
-        alert("Failed to load scenario: Invalid response from server");
+        toast.error("Failed to load scenario: Invalid response from server");
         return;
       }
       
@@ -120,7 +121,7 @@ export default function Home() {
       router.push(`/company/${data.id}`);
     } catch (error) {
       console.error("Error loading example:", error);
-      alert(`Failed to load scenario: ${error instanceof Error ? error.message : "Unknown error"}`);
+      toast.error(`Failed to load scenario: ${error instanceof Error ? error.message : "Unknown error"}`);
     } finally {
       setIsGenerating(false);
     }

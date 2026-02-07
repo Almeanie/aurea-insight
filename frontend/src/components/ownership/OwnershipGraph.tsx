@@ -1066,7 +1066,7 @@ export default function OwnershipGraph({
   }, [structureKey, width, height]); // Only run when structure changes
 
   return (
-    <div ref={containerRef} className={`relative ${isFullscreen ? 'w-full h-full' : 'w-full h-[500px]'}`}>
+    <div ref={containerRef} className="relative w-full h-full">
       {/* Expand/Close button */}
       {!isFullscreen && onExpandClick && (
         <button
