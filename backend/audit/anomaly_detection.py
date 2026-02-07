@@ -98,7 +98,11 @@ class AnomalyDetector:
                 "recommendation": "Review transactions for potential data manipulation or fraud",
                 "confidence": min(chi_square / 30, 0.95),
                 "gaap_principle": "Data Integrity",
-                "detection_method": f"Statistical analysis: Benford's Law chi-square test (value: {chi_square:.2f}, critical: 15.507)"
+                "detection_method": f"Statistical analysis: Benford's Law chi-square test (value: {chi_square:.2f}, critical: 15.507)",
+                "benford_expected": {str(d): round(v, 4) for d, v in BENFORD_EXPECTED.items()},
+                "benford_actual": {str(d): round(v, 4) for d, v in actual_dist.items()},
+                "benford_chi_square": round(chi_square, 2),
+                "benford_sample_size": total
             })
         
         return findings

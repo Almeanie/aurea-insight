@@ -36,12 +36,36 @@ async def lifespan(app: FastAPI):
             logger.info("Pre-initializing audit engine...")
             engine = get_audit_engine()
             # Touch components to initialize them
-            _ = engine.gemini  # Initialize Gemini client
+            gemini = engine.gemini  # Initialize Gemini client
             _ = engine.gaap_engine  # Initialize GAAP rules
             _ = engine.ifrs_engine  # Initialize IFRS rules
             logger.info("Audit engine pre-initialized successfully")
+            
+            # Send a tiny warmup call to Gemini to pre-establish the connection
+            # This eliminates the cold-start delay on the first real request
+            if gemini.model or gemini.client:
+                logger.info("Warming up Gemini API with test call...")
+                warmup_result = await gemini.generate(
+                    prompt="Respond with just the word OK",
+                    max_tokens=100,
+                    purpose="warmup"
+                )
+                if warmup_result.get("text"):
+                    logger.info("Gemini API warmup successful")
+                else:
+                    logger.warning(f"Gemini warmup returned no text: {warmup_result.get('error')}")
         except Exception as e:
             logger.warning(f"Audit engine warm-up failed (non-critical): {e}")
+        
+        # Pre-load SEC EDGAR tickers cache
+        try:
+            from ownership.registries.sec_edgar import SECEdgarAPI
+            logger.info("Pre-loading SEC EDGAR tickers cache...")
+            sec = SECEdgarAPI()
+            await sec._load_tickers()
+            logger.info("SEC EDGAR tickers cache loaded")
+        except Exception as e:
+            logger.warning(f"SEC EDGAR cache warm-up failed (non-critical): {e}")
     
     # Run warm-up in background (don't block startup)
     asyncio.create_task(warm_up())
