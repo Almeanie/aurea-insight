@@ -191,6 +191,9 @@ class GeminiClient:
                 logger.debug(f"[generate] PROMPT PREVIEW (first 500 chars):\n{full_prompt[:500]}...")
                 
                 try:
+                    # Use longer timeout for first call (cold start) vs subsequent calls
+                    call_timeout = 60.0 if attempt == 0 else 45.0
+                    
                     if self.client_type == "google_genai":
                         # New google-genai package
                         response = await asyncio.wait_for(
@@ -200,7 +203,7 @@ class GeminiClient:
                                 temperature,
                                 max_tokens
                             ),
-                            timeout=15.0  # 15s timeout
+                            timeout=call_timeout
                         )
                     else:
                         # Legacy google-generativeai package
@@ -210,10 +213,10 @@ class GeminiClient:
                                 temperature,
                                 max_tokens
                             ),
-                            timeout=15.0  # 15s timeout
+                            timeout=call_timeout
                         )
                 except asyncio.TimeoutError:
-                    raise ValueError("Gemini API request timed out after 15 seconds")
+                    raise ValueError(f"Gemini API request timed out after {call_timeout:.0f} seconds")
                 
                 response_text = response
                 
@@ -332,11 +335,22 @@ class GeminiClient:
         
         # Handle blocked or empty responses
         if response.text is None:
-            # Check if response was blocked
+            # Try to extract partial text from candidates
             if hasattr(response, 'candidates') and response.candidates:
                 candidate = response.candidates[0]
-                if hasattr(candidate, 'finish_reason'):
-                    logger.warning(f"[_generate_with_new_client] Response blocked, reason: {candidate.finish_reason}")
+                finish_reason = getattr(candidate, 'finish_reason', None)
+                
+                # MAX_TOKENS means the response was truncated but may have partial content
+                if finish_reason and 'MAX_TOKENS' in str(finish_reason):
+                    # Try to get partial text from parts
+                    if hasattr(candidate, 'content') and candidate.content and hasattr(candidate.content, 'parts'):
+                        parts_text = ''.join(p.text for p in candidate.content.parts if hasattr(p, 'text') and p.text)
+                        if parts_text:
+                            logger.warning(f"[_generate_with_new_client] Response truncated (MAX_TOKENS), returning partial: {len(parts_text)} chars")
+                            return parts_text
+                    logger.warning(f"[_generate_with_new_client] Response hit MAX_TOKENS but no partial text available")
+                else:
+                    logger.warning(f"[_generate_with_new_client] Response blocked, reason: {finish_reason}")
             raise ValueError("Response text is None - content may be blocked or model overloaded")
         
         return response.text

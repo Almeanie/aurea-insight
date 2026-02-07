@@ -38,7 +38,8 @@ class AJEGenerator:
         correctable_categories = [
             FindingCategory.CLASSIFICATION.value,
             FindingCategory.TIMING.value,
-            FindingCategory.STRUCTURAL.value
+            FindingCategory.STRUCTURAL.value,
+            FindingCategory.FRAUD.value,
         ]
         
         correctable = [f for f in findings if f.get("category") in correctable_categories]
@@ -252,6 +253,66 @@ class AJEGenerator:
                 "is_balanced": True
             }
         
+        # Rule 8: Fraud - Duplicate/Suspicious Payments (provision for loss)
+        if category == "fraud" and ("duplicate" in issue or "structuring" in issue or "suspicious" in issue):
+            rationale = ("Provision for probable loss from suspected fraudulent transactions per IAS 37" if is_ifrs
+                        else "Provision for probable loss from suspected fraudulent transactions per ASC 450")
+            return {
+                **base_aje,
+                "entries": [
+                    {"account_code": "6850", "account_name": "Fraud Loss Expense", "debit": amount, "credit": 0},
+                    {"account_code": "2150", "account_name": "Provision for Fraud Losses", "debit": 0, "credit": amount}
+                ],
+                "total_debits": amount,
+                "total_credits": amount,
+                "description": f"Provision for suspected fraud per {standard_prefix} finding {finding.get('finding_id')}",
+                "finding_reference": finding.get("finding_id"),
+                "rationale": rationale,
+                "rule_applied": f"RULE_FRAUD_PROVISION_{standard_prefix}",
+                "standard_reference": "IAS 37 - Provisions, Contingent Liabilities" if is_ifrs else "ASC 450 - Contingencies",
+                "is_balanced": True
+            }
+        
+        # Rule 9: Fraud - Round-tripping / Vendor anomalies (reclassify revenue)
+        if category == "fraud" and ("round-trip" in issue or "vendor" in issue or "round number" in issue):
+            rationale = ("Reclassify potentially fictitious revenue per IAS 18 / IFRS 15" if is_ifrs
+                        else "Reclassify potentially fictitious revenue per ASC 606")
+            return {
+                **base_aje,
+                "entries": [
+                    {"account_code": "4000", "account_name": "Revenue", "debit": amount, "credit": 0},
+                    {"account_code": "2200", "account_name": "Deferred Revenue / Suspense", "debit": 0, "credit": amount}
+                ],
+                "total_debits": amount,
+                "total_credits": amount,
+                "description": f"Reclassify suspect revenue per {standard_prefix} finding {finding.get('finding_id')}",
+                "finding_reference": finding.get("finding_id"),
+                "rationale": rationale,
+                "rule_applied": f"RULE_FRAUD_REVENUE_RECLASSIFICATION_{standard_prefix}",
+                "standard_reference": "IFRS 15 - Revenue from Contracts with Customers" if is_ifrs else "ASC 606 - Revenue Recognition",
+                "is_balanced": True
+            }
+        
+        # Rule 10: Fraud - Generic (Benford's, timing, weekend, shared address)
+        if category == "fraud":
+            rationale = (f"Segregate flagged transactions pending investigation per {standard_prefix} audit procedures" if is_ifrs
+                        else f"Segregate flagged transactions pending investigation per {standard_prefix} audit procedures")
+            return {
+                **base_aje,
+                "entries": [
+                    {"account_code": "1950", "account_name": "Suspense - Under Investigation", "debit": amount, "credit": 0},
+                    {"account_code": "6900", "account_name": "Miscellaneous Expense", "debit": 0, "credit": amount}
+                ],
+                "total_debits": amount,
+                "total_credits": amount,
+                "description": f"Reclassify to suspense pending fraud investigation per {standard_prefix} finding {finding.get('finding_id')}",
+                "finding_reference": finding.get("finding_id"),
+                "rationale": rationale,
+                "rule_applied": f"RULE_FRAUD_SUSPENSE_{standard_prefix}",
+                "standard_reference": "ISA 240 - Auditor's Responsibilities Relating to Fraud" if is_ifrs else "AU-C 240 - Consideration of Fraud",
+                "is_balanced": True
+            }
+        
         # Default: Generic reclassification
         if category in ["classification", "structural", "timing"]:
             rationale = (f"Correction required per {standard_prefix} audit finding" if is_ifrs
@@ -310,6 +371,7 @@ CHART OF ACCOUNTS:
 {coa_summary}
 
 Generate a balanced journal entry with proper debits and credits following {standard_name} principles.
+For fraud findings, consider: provision for losses (ASC 450/IAS 37), reclassification to suspense accounts, or reversal of fictitious entries.
 Return ONLY valid JSON in this format:
 {{
     "description": "Brief description of the adjustment",

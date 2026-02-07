@@ -51,6 +51,116 @@ interface Finding {
   affected_transactions?: string[];
   audit_rule?: string;
   rule_code?: string;
+  benford_expected?: Record<string, number>;
+  benford_actual?: Record<string, number>;
+  benford_chi_square?: number;
+  benford_sample_size?: number;
+}
+
+// Benford's Law Distribution Chart
+function BenfordsChart({ expected, actual, chiSquare, sampleSize }: {
+  expected: Record<string, number>;
+  actual: Record<string, number>;
+  chiSquare: number;
+  sampleSize: number;
+}) {
+  const digits = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+  const maxVal = Math.max(
+    ...digits.map(d => Math.max(expected[d] || 0, actual[d] || 0))
+  );
+  const chartH = 180;
+  const barW = 18;
+  const gap = 8;
+  const groupW = barW * 2 + gap;
+  const totalW = digits.length * groupW + (digits.length - 1) * 12;
+  const paddingLeft = 40;
+  const paddingBottom = 30;
+  const svgW = totalW + paddingLeft + 20;
+  const svgH = chartH + paddingBottom + 10;
+
+  return (
+    <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f]">
+      <h4 className="font-medium mb-3 flex items-center gap-2">
+        <AlertTriangle className="h-4 w-4 text-[#fbbf24]" />
+        Benford&apos;s Law Distribution
+      </h4>
+      <div className="flex items-center gap-4 mb-3 text-xs">
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#00d4ff" }} />
+          <span className="text-muted-foreground">Expected</span>
+        </div>
+        <div className="flex items-center gap-1.5">
+          <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: "#ff6b35" }} />
+          <span className="text-muted-foreground">Actual</span>
+        </div>
+        <span className="text-muted-foreground ml-auto">
+          Chi-square: <span className="text-[#ff6b35] font-mono font-bold">{chiSquare}</span> | 
+          n={sampleSize.toLocaleString()}
+        </span>
+      </div>
+      <svg width="100%" viewBox={`0 0 ${svgW} ${svgH}`} className="overflow-visible">
+        {/* Y-axis labels */}
+        {[0, 0.1, 0.2, 0.3].map((v) => {
+          const y = chartH - (v / maxVal) * (chartH - 10);
+          return (
+            <g key={v}>
+              <text x={paddingLeft - 6} y={y + 3} textAnchor="end" fill="#666" fontSize="9" fontFamily="monospace">
+                {(v * 100).toFixed(0)}%
+              </text>
+              <line x1={paddingLeft} x2={svgW - 10} y1={y} y2={y} stroke="#1f1f1f" strokeWidth="0.5" />
+            </g>
+          );
+        })}
+        {/* Bars */}
+        {digits.map((d, i) => {
+          const x = paddingLeft + i * (groupW + 12);
+          const expH = ((expected[d] || 0) / maxVal) * (chartH - 10);
+          const actH = ((actual[d] || 0) / maxVal) * (chartH - 10);
+          const deviation = Math.abs((actual[d] || 0) - (expected[d] || 0));
+          const actColor = deviation > 0.03 ? "#ff3366" : deviation > 0.015 ? "#ff6b35" : "#22c55e";
+          return (
+            <g key={d}>
+              {/* Expected bar */}
+              <rect
+                x={x}
+                y={chartH - expH}
+                width={barW}
+                height={expH}
+                fill="#00d4ff"
+                opacity={0.7}
+                rx={2}
+              />
+              {/* Actual bar */}
+              <rect
+                x={x + barW + gap}
+                y={chartH - actH}
+                width={barW}
+                height={actH}
+                fill={actColor}
+                opacity={0.85}
+                rx={2}
+              />
+              {/* Digit label */}
+              <text
+                x={x + groupW / 2}
+                y={chartH + 16}
+                textAnchor="middle"
+                fill="#888"
+                fontSize="11"
+                fontFamily="monospace"
+                fontWeight="bold"
+              >
+                {d}
+              </text>
+            </g>
+          );
+        })}
+      </svg>
+      <p className="text-xs text-muted-foreground mt-2">
+        Critical value at 0.05 significance (df=8) is 15.507. Values above indicate non-random distribution.
+      </p>
+    </div>
+  );
 }
 
 interface FindingDetailDialogProps {
@@ -137,6 +247,16 @@ export default function FindingDetailDialog({
                   </h4>
                   <p className="text-muted-foreground">{finding.details}</p>
                 </div>
+
+                {/* Benford's Law Chart */}
+                {finding.benford_expected && finding.benford_actual && (
+                  <BenfordsChart
+                    expected={finding.benford_expected}
+                    actual={finding.benford_actual}
+                    chiSquare={finding.benford_chi_square || 0}
+                    sampleSize={finding.benford_sample_size || 0}
+                  />
+                )}
 
                 <div className="bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f]">
                   <h4 className="font-medium mb-2">

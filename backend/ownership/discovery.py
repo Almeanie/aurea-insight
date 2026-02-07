@@ -978,6 +978,10 @@ Only include clearly identified owners, shareholders, or major investors.
         company_name = entity_data.get("company_name", "Unknown")
         is_boilerplate = entity_data.get("is_boilerplate", False)
         
+        # Determine primary api_source
+        api_sources_list = entity_data.get("api_sources", [])
+        primary_source = api_sources_list[0] if api_sources_list else "unknown"
+        
         # Add company node
         self.graph.add_node(
             company_name,
@@ -986,8 +990,9 @@ Only include clearly identified owners, shareholders, or major investors.
             status=entity_data.get("status"),
             address=entity_data.get("registered_address"),
             red_flags=entity_data.get("red_flags", []),
-            api_sources=entity_data.get("api_sources", []),
-            is_unknown=entity_data.get("api_sources", ["unknown"])[0] == "unknown",
+            api_sources=api_sources_list,
+            api_source=primary_source,
+            is_unknown=primary_source == "unknown",
             is_boilerplate=is_boilerplate
         )
         
@@ -997,17 +1002,18 @@ Only include clearly identified owners, shareholders, or major investors.
                 owner_name = owner
                 owner_type = "unknown"
                 owner_pct = None
-                api_source = "unknown"
+                owner_api_source = primary_source
             else:
                 owner_name = owner.get("name", "Unknown")
                 owner_type = owner.get("type", "unknown")
                 owner_pct = owner.get("ownership_percentage")
-                api_source = owner.get("api_source", "unknown")
+                owner_api_source = owner.get("api_source", primary_source)
             
             self.graph.add_node(
                 owner_name,
                 type=owner_type,
-                api_source=api_source
+                api_source=owner_api_source,
+                api_sources=[owner_api_source]
             )
             self.graph.add_edge(
                 owner_name,
@@ -1021,18 +1027,19 @@ Only include clearly identified owners, shareholders, or major investors.
             if isinstance(director, str):
                 director_name = director
                 director_role = "Director"
-                api_source = "unknown"
+                director_api_source = primary_source
             else:
                 director_name = director.get("name", "Unknown")
                 director_role = director.get("role", "Director")
-                api_source = director.get("api_source", "unknown")
+                director_api_source = director.get("api_source", primary_source)
             
             # Don't duplicate if already added as owner
             if not self.graph.has_node(director_name):
                 self.graph.add_node(
                     director_name,
                     type="individual",
-                    api_source=api_source
+                    api_source=director_api_source,
+                    api_sources=[director_api_source]
                 )
             
             self.graph.add_edge(
@@ -1048,17 +1055,18 @@ Only include clearly identified owners, shareholders, or major investors.
                 parent_name = parent
                 parent_type = "company"
                 parent_rel_type = "parent"
-                api_source = "unknown"
+                parent_api_source = primary_source
             else:
                 parent_name = parent.get("name", "Unknown Parent")
                 parent_type = "company"
                 parent_rel_type = parent.get("relationship_type", "parent")
-                api_source = parent.get("api_source", "unknown")
+                parent_api_source = parent.get("api_source", primary_source)
             
             self.graph.add_node(
                 parent_name,
                 type=parent_type,
-                api_source=api_source
+                api_source=parent_api_source,
+                api_sources=[parent_api_source]
             )
             self.graph.add_edge(
                 parent_name,
@@ -1270,6 +1278,15 @@ Return JSON:
             if node_type not in ["company", "individual", "unknown", "boilerplate"]:
                 node_type = "unknown"
             
+            # Extract api_source from api_sources list or direct attribute
+            api_sources = data.get("api_sources", [])
+            api_source = data.get("api_source")
+            if not api_source and api_sources:
+                api_source = api_sources[0] if isinstance(api_sources, list) else str(api_sources)
+            # Fall back to data_sources tracking
+            if not api_source and node in self.data_sources:
+                api_source = self.data_sources[node]
+            
             nodes.append(EntityNode(
                 id=node,
                 name=node,
@@ -1278,6 +1295,7 @@ Return JSON:
                 status=data.get("status"),
                 address=data.get("address"),
                 red_flags=data.get("red_flags", []),
+                api_source=api_source,
                 is_boilerplate=data.get("is_boilerplate", False)
             ))
         
@@ -1326,14 +1344,6 @@ Return JSON:
     def _get_api_notes(self) -> list[str]:
         """Get helpful notes about API availability."""
         notes = []
-        
-        if not self.opencorporates._has_api_key():
-            notes.append("OpenCorporates: Requires paid API subscription (global company data)")
-        
-        if not self.uk_companies_house.api_key:
-            notes.append("UK Companies House: Free key required from developer.company-information.service.gov.uk")
-        elif self.api_stats["uk_companies_house"]["calls"] > 0 and self.api_stats["uk_companies_house"]["success"] == 0:
-            notes.append("UK Companies House: Key may not be activated yet (can take 24 hours)")
         
         if self.api_stats["sec_edgar"]["calls"] > 0 and self.api_stats["sec_edgar"]["success"] == 0:
             notes.append("SEC EDGAR: No US public companies matched the search queries")

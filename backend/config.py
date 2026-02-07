@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     # API
     API_PREFIX: str = "/api"
     # Raw CORS_ORIGINS as string (comma-separated or JSON array)
-    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000"
+    CORS_ORIGINS: str = "http://localhost:3000,http://127.0.0.1:3000,https://aurea-insight-frontend-806198039129.us-central1.run.app"
     
     @computed_field
     @property

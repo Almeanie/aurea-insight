@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useState, useEffect, useRef, useMemo } from "react";
+import { use, useState, useEffect, useRef, useMemo, useCallback } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -52,6 +52,42 @@ import Link from "next/link";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
 import { AuditProgress } from "@/components/ui/progress";
 import { API_BASE_URL } from "@/lib/api";
+
+// Count-up animation hook for stat cards
+function useCountUp(target: number | null, duration: number = 800): string {
+  const [display, setDisplay] = useState<string>("--");
+  const prevTarget = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (target === null || target === undefined) {
+      setDisplay("--");
+      prevTarget.current = null;
+      return;
+    }
+    // Only animate when transitioning from null/different value to a new value
+    if (prevTarget.current === target) return;
+    prevTarget.current = target;
+
+    const startTime = performance.now();
+    const startVal = 0;
+    const isFloat = target % 1 !== 0;
+
+    function tick(now: number) {
+      const elapsed = now - startTime;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease-out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = startVal + (target! - startVal) * eased;
+      setDisplay(isFloat ? current.toFixed(1) : Math.round(current).toString());
+      if (progress < 1) {
+        requestAnimationFrame(tick);
+      }
+    }
+    requestAnimationFrame(tick);
+  }, [target, duration]);
+
+  return display;
+}
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -686,6 +722,16 @@ export default function CompanyPage({ params }: PageProps) {
     return trail?.gemini_interactions || [];
   }, [streamingGeminiInteractions, trail?.gemini_interactions]);
 
+  // Count-up animations for stat cards
+  const animatedRiskScore = useCountUp(riskScore ? riskScore.overall_score : null, 800);
+  const animatedFindingsCount = useCountUp(
+    findings.length > 0 || auditResults ? findings.length : null, 600
+  );
+  const animatedAjesCount = useCountUp(
+    ajes.length > 0 || auditResults ? ajes.length : null, 600
+  );
+  const animatedGlCount = useCountUp(gl?.entries?.length ?? null, 600);
+
   // === EARLY RETURNS (after all hooks) ===
   if (isLoading) {
     return (
@@ -806,7 +852,7 @@ export default function CompanyPage({ params }: PageProps) {
                     riskScore?.risk_level === "low" ? "text-[#22c55e]" :
                       "text-muted-foreground"
                 }`}>
-                {riskScore ? riskScore.overall_score.toFixed(1) : "--"}
+                {animatedRiskScore}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
                 {riskScore ? riskScore.risk_level.toUpperCase() : "Run audit"}
@@ -818,7 +864,7 @@ export default function CompanyPage({ params }: PageProps) {
             <CardContent className="pt-6">
               <div className="text-sm text-muted-foreground mb-1">Total Findings</div>
               <div className="text-3xl font-bold financial-number">
-                {findings.length > 0 || auditResults ? findings.length : "--"}
+                {animatedFindingsCount}
                 {isAuditing && findings.length > 0 && (
                   <span className="text-sm text-[#00d4ff] ml-2 animate-pulse">live</span>
                 )}
@@ -845,7 +891,7 @@ export default function CompanyPage({ params }: PageProps) {
             <CardContent className="pt-6">
               <div className="text-sm text-muted-foreground mb-1">Adjusting Entries</div>
               <div className="text-3xl font-bold financial-number">
-                {ajes.length > 0 || auditResults ? ajes.length : "--"}
+                {animatedAjesCount}
                 {isAuditing && ajes.length > 0 && (
                   <span className="text-sm text-[#00d4ff] ml-2 animate-pulse">live</span>
                 )}
@@ -861,7 +907,7 @@ export default function CompanyPage({ params }: PageProps) {
             <CardContent className="pt-6">
               <div className="text-sm text-muted-foreground mb-1">GL Entries</div>
               <div className="text-3xl font-bold financial-number">
-                {gl?.entries?.length ?? "--"}
+                {animatedGlCount}
               </div>
               <div className="text-xs text-muted-foreground mt-1">
                 {gl?.period_start} to {gl?.period_end}
@@ -869,6 +915,75 @@ export default function CompanyPage({ params }: PageProps) {
             </CardContent>
           </Card>
         </div>
+
+        {/* Severity Breakdown Donut Chart */}
+        {riskScore && (riskScore.critical_count > 0 || riskScore.high_count > 0 || riskScore.medium_count > 0 || riskScore.low_count > 0) && (() => {
+          const counts = [
+            { label: "Critical", count: riskScore.critical_count || 0, color: "#ff3366" },
+            { label: "High", count: riskScore.high_count || 0, color: "#ff6b35" },
+            { label: "Medium", count: riskScore.medium_count || 0, color: "#fbbf24" },
+            { label: "Low", count: riskScore.low_count || 0, color: "#22c55e" },
+          ];
+          const total = counts.reduce((s, c) => s + c.count, 0);
+          if (total === 0) return null;
+          const radius = 40;
+          const stroke = 10;
+          const circumference = 2 * Math.PI * radius;
+          let offset = 0;
+          return (
+            <Card className="bg-[#111111] border-[#1f1f1f] mb-6">
+              <CardContent className="pt-4 pb-4">
+                <div className="flex items-center gap-8">
+                  <div className="flex items-center gap-4">
+                    <svg width="100" height="100" viewBox="0 0 100 100">
+                      {counts.map((seg, i) => {
+                        if (seg.count === 0) return null;
+                        const pct = seg.count / total;
+                        const dashLen = pct * circumference;
+                        const dashGap = circumference - dashLen;
+                        const currentOffset = offset;
+                        offset += dashLen;
+                        return (
+                          <circle
+                            key={i}
+                            cx="50"
+                            cy="50"
+                            r={radius}
+                            fill="none"
+                            stroke={seg.color}
+                            strokeWidth={stroke}
+                            strokeDasharray={`${dashLen} ${dashGap}`}
+                            strokeDashoffset={-currentOffset}
+                            strokeLinecap="round"
+                            transform="rotate(-90 50 50)"
+                          />
+                        );
+                      })}
+                      <text x="50" y="46" textAnchor="middle" fill="white" fontSize="18" fontWeight="bold" fontFamily="var(--font-geist-mono)">
+                        {total}
+                      </text>
+                      <text x="50" y="60" textAnchor="middle" fill="#888" fontSize="9">
+                        findings
+                      </text>
+                    </svg>
+                    <div className="text-sm text-muted-foreground font-medium">Severity Breakdown</div>
+                  </div>
+                  <div className="flex gap-6">
+                    {counts.map((seg, i) => (
+                      seg.count > 0 && (
+                        <div key={i} className="flex items-center gap-2">
+                          <div className="w-3 h-3 rounded-full" style={{ backgroundColor: seg.color }} />
+                          <span className="text-sm text-muted-foreground">{seg.label}</span>
+                          <span className="text-sm font-bold financial-number" style={{ color: seg.color }}>{seg.count}</span>
+                        </div>
+                      )
+                    ))}
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          );
+        })()}
 
         {/* Main Content */}
         <div className="grid lg:grid-cols-3 gap-6">
@@ -923,6 +1038,8 @@ export default function CompanyPage({ params }: PageProps) {
                               <TableHead className="text-muted-foreground">Severity</TableHead>
                               <TableHead className="text-muted-foreground">Category</TableHead>
                               <TableHead className="text-muted-foreground">Issue</TableHead>
+                              <TableHead className="text-muted-foreground text-right">Txns</TableHead>
+                              <TableHead className="text-muted-foreground text-right">Amount</TableHead>
                               <TableHead className="text-muted-foreground">Confidence</TableHead>
                               <TableHead className="text-muted-foreground w-24">Action</TableHead>
                             </TableRow>
@@ -972,6 +1089,20 @@ export default function CompanyPage({ params }: PageProps) {
                                         <span className="truncate">{finding.detection_method.substring(0, 50)}...</span>
                                       </div>
                                     )}
+                                  </TableCell>
+                                  <TableCell className="text-right financial-number text-muted-foreground">
+                                    {(() => {
+                                      const txnCount = finding.affected_transactions?.length || finding.transaction_details?.length || 0;
+                                      return txnCount > 0 ? txnCount : "-";
+                                    })()}
+                                  </TableCell>
+                                  <TableCell className="text-right financial-number">
+                                    {(() => {
+                                      const txDetails = finding.transaction_details;
+                                      if (!txDetails || txDetails.length === 0) return <span className="text-muted-foreground">-</span>;
+                                      const total = txDetails.reduce((sum: number, tx: any) => sum + (tx.debit || 0) + (tx.credit || 0), 0) / 2;
+                                      return <span className="text-[#ff6b35]">${total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>;
+                                    })()}
                                   </TableCell>
                                   <TableCell className="financial-number">
                                     <div>{Math.round((finding.confidence || 0) * 100)}%</div>
