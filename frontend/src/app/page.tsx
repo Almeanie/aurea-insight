@@ -44,6 +44,41 @@ interface Scenario {
   issues: string[];
 }
 
+const FALLBACK_SCENARIOS: Scenario[] = [
+  {
+    id: "acme_saas",
+    name: "Acme Software Solutions",
+    description: "SaaS startup with typical audit issues",
+    industry: "saas",
+    expected_findings: "6-12 findings, HIGH risk",
+    issues: ["Expense misclassification", "High-value transactions", "Prepaid insurance not amortized"],
+  },
+  {
+    id: "startup_growth",
+    name: "TechStart Growth Co",
+    description: "Fast-growing startup with deferred revenue",
+    industry: "saas",
+    expected_findings: "3-6 findings, MEDIUM risk",
+    issues: ["Deferred revenue timing", "Travel expense misclassification"],
+  },
+  {
+    id: "fraud_indicators",
+    name: "Suspicious Corp (Fraud Training)",
+    description: "Company with multiple fraud red flags",
+    industry: "services",
+    expected_findings: "15-25 findings, CRITICAL risk",
+    issues: ["Related party transactions", "Transaction structuring", "Offshore payments"],
+  },
+  {
+    id: "clean_retail",
+    name: "Main Street Retail",
+    description: "Well-run small retail business with minimal issues",
+    industry: "retail",
+    expected_findings: "0-2 findings, LOW risk",
+    issues: ["Generally clean books"],
+  },
+];
+
 export default function Home() {
   const router = useRouter();
   const [companies, setCompanies] = useState<any[]>([]);
@@ -52,16 +87,20 @@ export default function Home() {
   const [dataSource, setDataSource] = useState<string>("");
   const [quotaExceeded, setQuotaExceeded] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
-  const [scenarios, setScenarios] = useState<Scenario[]>([]);
+  const [scenarios, setScenarios] = useState<Scenario[]>(FALLBACK_SCENARIOS);
   const [selectedScenario, setSelectedScenario] = useState<string>("acme_saas");
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Load scenarios on mount
+  // Load scenarios from API (updates fallback if available)
   useEffect(() => {
     fetch(`${API_BASE_URL}/api/companies/scenarios`)
       .then(res => res.json())
-      .then(data => setScenarios(data))
-      .catch(err => console.error("Failed to load scenarios:", err));
+      .then(data => {
+        if (Array.isArray(data) && data.length > 0) {
+          setScenarios(data);
+        }
+      })
+      .catch(err => console.error("Failed to load scenarios from API, using defaults:", err));
   }, []);
 
   const handleGenerateCompany = async () => {
