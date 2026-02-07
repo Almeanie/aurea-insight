@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { MessageSquare, Send, X } from "lucide-react";
 import { chatApi } from "@/lib/api";
 
@@ -29,12 +28,12 @@ export default function AuditorChat({ companyId, auditId }: AuditorChatProps) {
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const bottomRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
-    }
-  }, [messages]);
+    // Scroll to the bottom anchor whenever messages change
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
 
   const handleSend = async () => {
     if (!input.trim() || isLoading) return;
@@ -100,8 +99,12 @@ export default function AuditorChat({ companyId, auditId }: AuditorChatProps) {
 
         <div className="flex flex-col h-[calc(100vh-120px)] mt-4">
           {/* Messages */}
-          <ScrollArea className="flex-1 pr-4" ref={scrollRef}>
-            <div className="space-y-4">
+          <div
+            ref={scrollRef}
+            className="flex-1 overflow-y-auto pr-2"
+            style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}
+          >
+            <div className="space-y-4 pb-2">
               {messages.map((message, idx) => (
                 <div
                   key={idx}
@@ -142,8 +145,10 @@ export default function AuditorChat({ companyId, auditId }: AuditorChatProps) {
                   </div>
                 </div>
               )}
+              {/* Scroll anchor -- always at the bottom */}
+              <div ref={bottomRef} />
             </div>
-          </ScrollArea>
+          </div>
 
           {/* Input */}
           <div className="flex gap-2 mt-4">
