@@ -1174,7 +1174,7 @@ export default function CompanyPage({ params }: PageProps) {
 
               {/* Ownership Tab */}
               <TabsContent value="ownership">
-                <Card className="bg-[#111111] border-[#1f1f1f]">
+                <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                   <CardHeader className="flex flex-row items-center justify-between">
                     <div>
                       <CardTitle>Beneficial Ownership Network</CardTitle>
@@ -1288,10 +1288,10 @@ export default function CompanyPage({ params }: PageProps) {
               </TabsContent>
 
               {/* Audit Trail Tab */}
-              <TabsContent value="trail">
+              <TabsContent value="trail" className="overflow-hidden">
                 <div className="grid md:grid-cols-2 gap-4">
                   {/* Reasoning Chain */}
-                  <Card className="bg-[#111111] border-[#1f1f1f]">
+                  <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Clock className="h-5 w-5 text-[#00d4ff]" />
@@ -1304,7 +1304,7 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <ScrollArea className="max-h-[50vh]">
+                      <div className="max-h-[50vh] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
                         {reasoningChain.length > 0 ? (
                           <div className="space-y-2">
                             {reasoningChain.map((step: any, idx: number) => (
@@ -1322,7 +1322,7 @@ export default function CompanyPage({ params }: PageProps) {
                                 </div>
                                 <div className="flex-1 min-w-0 overflow-hidden">
                                   <div className="text-xs text-muted-foreground font-mono truncate">{step.timestamp}</div>
-                                  <div className="text-sm mt-1 wrap-break-word line-clamp-2">{step.step}</div>
+                                  <div className="text-sm mt-1 break-words line-clamp-2">{step.step}</div>
                                 </div>
                                 <Eye className="h-4 w-4 text-[#00d4ff] opacity-50 shrink-0" />
                               </div>
@@ -1341,12 +1341,12 @@ export default function CompanyPage({ params }: PageProps) {
                             )}
                           </div>
                         )}
-                      </ScrollArea>
+                      </div>
                     </CardContent>
                   </Card>
 
                   {/* Gemini Interactions */}
-                  <Card className="bg-[#111111] border-[#1f1f1f]">
+                  <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Brain className="h-5 w-5 text-[#a855f7]" />
@@ -1359,40 +1359,40 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <ScrollArea className="max-h-[50vh]">
+                      <div className="max-h-[50vh] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
                         {geminiInteractions.length > 0 ? (
                           <div className="space-y-3">
                             {geminiInteractions.map((interaction: any, idx: number) => (
                               <div
                                 key={idx}
-                                className="p-3 rounded bg-[#0a0a0a] border border-[#1f1f1f] cursor-pointer hover:border-[#a855f7] transition-colors"
+                                className="p-3 rounded bg-[#0a0a0a] border border-[#1f1f1f] cursor-pointer hover:border-[#a855f7] transition-colors overflow-hidden"
                                 onClick={() => {
                                   setSelectedInteraction(interaction);
                                   setInteractionDialogOpen(true);
                                 }}
                               >
-                                <div className="flex items-center justify-between mb-2">
-                                  <Badge variant="outline" className="text-[#a855f7] border-[#a855f7]">
+                                <div className="flex items-center justify-between mb-2 gap-2">
+                                  <Badge variant="outline" className="text-[#a855f7] border-[#a855f7] shrink-0">
                                     {interaction.purpose}
                                   </Badge>
-                                  <div className="flex items-center gap-2">
-                                    <span className="text-xs text-muted-foreground font-mono">
+                                  <div className="flex items-center gap-2 shrink-0">
+                                    <span className="text-xs text-muted-foreground font-mono truncate">
                                       {interaction.model}
                                     </span>
                                     <Eye className="h-4 w-4 text-[#a855f7]" />
                                   </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs">
-                                  <div className="bg-[#111111] p-2 rounded">
+                                  <div className="bg-[#111111] p-2 rounded overflow-hidden">
                                     <span className="text-muted-foreground">Prompt:</span>{" "}
                                     <span className="text-[#00d4ff]">{interaction.prompt_length} chars</span>
                                   </div>
-                                  <div className="bg-[#111111] p-2 rounded">
+                                  <div className="bg-[#111111] p-2 rounded overflow-hidden">
                                     <span className="text-muted-foreground">Response:</span>{" "}
                                     <span className="text-[#22c55e]">{interaction.response_length} chars</span>
                                   </div>
                                 </div>
-                                <p className="text-xs text-muted-foreground mt-2 italic">Click to view full prompt and response</p>
+                                <p className="text-xs text-muted-foreground mt-2 italic truncate">Click to view full prompt and response</p>
                               </div>
                             ))}
                           </div>
@@ -1409,14 +1409,14 @@ export default function CompanyPage({ params }: PageProps) {
                             )}
                           </div>
                         )}
-                      </ScrollArea>
+                      </div>
                     </CardContent>
                   </Card>
                 </div>
 
                 {/* Integrity Verification */}
                 {trail && (
-                  <Card className="bg-[#111111] border-[#1f1f1f] mt-4">
+                  <Card className="bg-[#111111] border-[#1f1f1f] mt-4 overflow-hidden">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Hash className="h-5 w-5 text-[#22c55e]" />
@@ -1455,7 +1455,7 @@ export default function CompanyPage({ params }: PageProps) {
                   </TabsList>
 
                   <TabsContent value="coa">
-                    <Card className="bg-[#111111] border-[#1f1f1f]">
+                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                       <CardHeader>
                         <CardTitle>Chart of Accounts</CardTitle>
                         <CardDescription>{coa?.accounts?.length || 0} accounts</CardDescription>
@@ -1488,7 +1488,7 @@ export default function CompanyPage({ params }: PageProps) {
                   </TabsContent>
 
                   <TabsContent value="gl">
-                    <Card className="bg-[#111111] border-[#1f1f1f]">
+                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                       <CardHeader>
                         <CardTitle>General Ledger</CardTitle>
                         <CardDescription>{gl?.entries?.length || 0} entries | {gl?.period_start} to {gl?.period_end}</CardDescription>
@@ -1527,7 +1527,7 @@ export default function CompanyPage({ params }: PageProps) {
                   </TabsContent>
 
                   <TabsContent value="tb">
-                    <Card className="bg-[#111111] border-[#1f1f1f]">
+                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                       <CardHeader>
                         <CardTitle>Trial Balance</CardTitle>
                         <CardDescription>
@@ -1587,7 +1587,7 @@ export default function CompanyPage({ params }: PageProps) {
                   </TabsContent>
 
                   <TabsContent value="ajes">
-                    <Card className="bg-[#111111] border-[#1f1f1f]">
+                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                           <FileText className="h-5 w-5 text-[#00d4ff]" />
