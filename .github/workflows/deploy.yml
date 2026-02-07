@@ -88,6 +88,11 @@ jobs:
       - name: Set up Cloud SDK
         uses: google-github-actions/setup-gcloud@v2
 
+      - name: Write frontend .env.production
+        run: |
+          echo "NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}" > ./frontend/.env.production
+          echo "Wrote .env.production with NEXT_PUBLIC_API_URL"
+
       - name: Deploy frontend to Cloud Run
         run: |
           for attempt in 1 2 3; do
@@ -96,7 +101,6 @@ jobs:
               --source ./frontend \
               --region ${{ env.GCP_REGION }} \
               --allow-unauthenticated \
-              --set-build-env-vars "NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }}" \
               --memory 512Mi \
               --cpu 1 \
               --port 8080 \
