@@ -38,7 +38,6 @@ async def lifespan(app: FastAPI):
             # Touch components to initialize them
             gemini = engine.gemini  # Initialize Gemini client
             _ = engine.gaap_engine  # Initialize GAAP rules
-            _ = engine.ifrs_engine  # Initialize IFRS rules
             logger.info("Audit engine pre-initialized successfully")
             
             # Send a tiny warmup call to Gemini to pre-establish the connection

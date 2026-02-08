@@ -28,9 +28,8 @@ async def _run_audit_task(
     accounting_standard: AccountingStandard = AccountingStandard.GAAP
 ):
     """Background task to run the actual audit."""
-    from audit.engine import get_audit_engine
-    
     try:
+        from audit.engine import get_audit_engine
         # Get checkpoint data if resuming
         checkpoint = None
         if resume:
@@ -107,11 +106,12 @@ async def _run_audit_task(
         results = await engine.run_full_audit(
             company_data=company_data,
             audit_record=record,
-            progress_callback=lambda msg, pct, step=None, total=7: progress_tracker.add_step(
+            progress_callback=lambda msg, pct, step=None, total=7, sname=None: progress_tracker.add_step(
                 audit_id, "info", msg, 
                 progress_percent=pct, 
                 current_step=step, 
-                total_steps=total
+                total_steps=total,
+                step_name=sname,
             ),
             data_callback=data_callback,
             is_cancelled=is_cancelled,

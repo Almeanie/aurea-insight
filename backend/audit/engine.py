@@ -6,25 +6,26 @@ from loguru import logger
 
 from core.gemini_client import GeminiClient
 from core.audit_trail import AuditRecord
-from core.schemas import AuditFinding, Severity, FindingCategory, AccountingBasis, AccountingStandard
+from core.schemas import AuditFinding, Severity, FindingCategory, AccountingBasis
 from .gaap_rules import GAAPRulesEngine
-from .ifrs_rules import IFRSRulesEngine
 from .anomaly_detection import AnomalyDetector
 from .fraud_detection import FraudDetector
 from .aje_generator import AJEGenerator
 from .risk_scorer import RiskScorer
 
-
-# Singleton instance for reuse across audits
-_audit_engine_instance: Optional["AuditEngine"] = None
+# ---------------------------------------------------------------------------
+# Singleton factory – avoids re-creating the engine on every audit run
+# ---------------------------------------------------------------------------
+_engine_instance: "AuditEngine | None" = None
 
 
 def get_audit_engine() -> "AuditEngine":
-    """Get or create the singleton AuditEngine instance."""
-    global _audit_engine_instance
-    if _audit_engine_instance is None:
-        _audit_engine_instance = AuditEngine()
-    return _audit_engine_instance
+    """Return (and lazily create) a singleton AuditEngine instance."""
+    global _engine_instance
+    if _engine_instance is None:
+        logger.info("[get_audit_engine] Creating singleton AuditEngine instance")
+        _engine_instance = AuditEngine()
+    return _engine_instance
 
 
 class AuditEngine:
@@ -32,57 +33,13 @@ class AuditEngine:
     
     def __init__(self):
         logger.info("[AuditEngine.__init__] Initializing audit engine components")
-        # Lazy initialization - components created on first use
-        self._gemini: Optional[GeminiClient] = None
-        self._gaap_engine: Optional[GAAPRulesEngine] = None
-        self._ifrs_engine: Optional[IFRSRulesEngine] = None
-        self._anomaly_detector: Optional[AnomalyDetector] = None
-        self._fraud_detector: Optional[FraudDetector] = None
-        self._aje_generator: Optional[AJEGenerator] = None
-        self._risk_scorer: Optional[RiskScorer] = None
-        logger.info("[AuditEngine.__init__] Engine created (components lazy-loaded)")
-    
-    @property
-    def gemini(self) -> GeminiClient:
-        if self._gemini is None:
-            self._gemini = GeminiClient()
-        return self._gemini
-    
-    @property
-    def gaap_engine(self) -> GAAPRulesEngine:
-        if self._gaap_engine is None:
-            self._gaap_engine = GAAPRulesEngine()
-        return self._gaap_engine
-    
-    @property
-    def ifrs_engine(self) -> IFRSRulesEngine:
-        if self._ifrs_engine is None:
-            self._ifrs_engine = IFRSRulesEngine()
-        return self._ifrs_engine
-    
-    @property
-    def anomaly_detector(self) -> AnomalyDetector:
-        if self._anomaly_detector is None:
-            self._anomaly_detector = AnomalyDetector()
-        return self._anomaly_detector
-    
-    @property
-    def fraud_detector(self) -> FraudDetector:
-        if self._fraud_detector is None:
-            self._fraud_detector = FraudDetector()
-        return self._fraud_detector
-    
-    @property
-    def aje_generator(self) -> AJEGenerator:
-        if self._aje_generator is None:
-            self._aje_generator = AJEGenerator()
-        return self._aje_generator
-    
-    @property
-    def risk_scorer(self) -> RiskScorer:
-        if self._risk_scorer is None:
-            self._risk_scorer = RiskScorer()
-        return self._risk_scorer
+        self.gemini = GeminiClient()
+        self.gaap_engine = GAAPRulesEngine()
+        self.anomaly_detector = AnomalyDetector()
+        self.fraud_detector = FraudDetector()
+        self.aje_generator = AJEGenerator()
+        self.risk_scorer = RiskScorer()
+        logger.info("[AuditEngine.__init__] All components initialized")
     
     async def run_full_audit(
         self,
@@ -95,17 +52,14 @@ class AuditEngine:
         on_quota_exceeded: callable = None,
         gemini_callback: callable = None,
         resume_from: dict = None,
-        accounting_standard: AccountingStandard = AccountingStandard.GAAP
+        accounting_standard=None,
     ) -> dict:
         """
         Run a complete audit on company data.
         
-        Args:
-            accounting_standard: Which accounting standard to use (GAAP or IFRS)
-        
         Steps:
         1. Validate data structure (Sequential - Gatekeeper)
-        2. Run GAAP/IFRS compliance checks (Parallel)
+        2. Run GAAP compliance checks (Parallel)
         3. Run anomaly detection (Parallel)
         4. Run fraud detection (Parallel)
         5. Generate findings with AI reasoning (Concurrent)
@@ -116,10 +70,10 @@ class AuditEngine:
         
         TOTAL_STEPS = 7
         
-        def report_progress(msg: str, pct: float, current_step: int = None):
+        def report_progress(msg: str, pct: float, current_step: int = None, step_name: str = None):
             if progress_callback:
                 try:
-                    progress_callback(msg, pct, current_step, TOTAL_STEPS)
+                    progress_callback(msg, pct, current_step, TOTAL_STEPS, step_name)
                 except Exception:
                     pass
         
@@ -201,7 +155,7 @@ class AuditEngine:
         tb = company_data.get("tb")
         
         logger.info(f"[run_full_audit] Company: {metadata.name}")
-        report_progress(f"Loading data: {len(gl.entries) if gl else 0} GL entries", 5.0)
+        report_progress(f"Loading data: {len(gl.entries) if gl else 0} GL entries", 5.0, step_name="Loading Data")
         
         all_findings = []
         
@@ -211,7 +165,7 @@ class AuditEngine:
         
         if start_phase <= 1:
             logger.info("[run_full_audit] Step 1: Validating data structure")
-            report_progress("Step 1/7: Validating data structure...", 10.0, current_step=1)
+            report_progress("Step 1/7: Validating data structure...", 10.0, current_step=1, step_name="Data Validation")
             
             stream_reasoning_step("Starting structural validation", {
                 "description": "Checking data integrity and basic accounting principles",
@@ -234,7 +188,6 @@ class AuditEngine:
             
             for finding in structural_findings:
                 stream_data("finding", finding)
-                await asyncio.sleep(0.07)
             
             checkpoint("structural", {"findings": all_findings})
 
@@ -244,30 +197,20 @@ class AuditEngine:
             return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
 
         if start_phase <= 2:
-            # Determine which rules engine to use
-            standard_name = "IFRS" if accounting_standard == AccountingStandard.IFRS else "US GAAP"
-            rules_engine = self.ifrs_engine if accounting_standard == AccountingStandard.IFRS else self.gaap_engine
-            
-            logger.info(f"[run_full_audit] Starting parallel analysis ({standard_name}, Anomaly, Fraud)")
-            report_progress(f"Step 2-4: Running parallel analysis ({standard_name}, Anomaly, Fraud)...", 20.0, current_step=2)
+            logger.info("[run_full_audit] Starting parallel analysis (GAAP, Anomaly, Fraud)")
+            report_progress("Step 2-4: Running parallel analysis (GAAP, Anomaly, Fraud)...", 20.0, current_step=2, step_name="Parallel Analysis")
             
             # --- Define Async Task Wrappers ---
             
-            async def run_compliance():
-                stream_reasoning_step(f"Running {standard_name} compliance checks", {
-                    "description": f"Applying {standard_name} validation rules",
-                    "accounting_standard": standard_name,
+            async def run_gaap():
+                stream_reasoning_step("Running GAAP compliance checks", {
+                    "description": "Applying Generally Accepted Accounting Principles validation",
                     "accounting_basis": str(metadata.accounting_basis),
                     "steps": "Running concurrently with other checks"
                 })
-                # rules_engine.check_compliance is async and uses asyncio.to_thread internally
-                findings = await rules_engine.check_compliance(gl, tb, coa, metadata.accounting_basis)
-                # Tag findings with the accounting standard used
-                for f in findings:
-                    f["accounting_standard_used"] = accounting_standard.value
-                for f in findings:
-                    stream_data("finding", f)
-                    await asyncio.sleep(0.07)
+                # gaap_engine.check_compliance is now async and uses asyncio.to_thread internally
+                findings = await self.gaap_engine.check_compliance(gl, tb, coa, metadata.accounting_basis)
+                for f in findings: stream_data("finding", f)
                 return findings
 
             async def run_anomaly():
@@ -277,9 +220,7 @@ class AuditEngine:
                 })
                 # CPU-bound, run in thread to avoid blocking event loop
                 findings = await asyncio.to_thread(self.anomaly_detector.detect_anomalies, gl)
-                for f in findings:
-                    stream_data("finding", f)
-                    await asyncio.sleep(0.07)
+                for f in findings: stream_data("finding", f)
                 return findings
 
             async def run_fraud():
@@ -289,30 +230,27 @@ class AuditEngine:
                 })
                 # CPU-bound, run in thread to avoid blocking event loop
                 findings = await asyncio.to_thread(self.fraud_detector.detect_fraud_patterns, gl)
-                for f in findings:
-                    stream_data("finding", f)
-                    await asyncio.sleep(0.07)
+                for f in findings: stream_data("finding", f)
                 return findings
 
             # --- Execute in Parallel ---
             # This allows the event loop to remain free for chat/health checks
-            results = await asyncio.gather(run_compliance(), run_anomaly(), run_fraud())
+            results = await asyncio.gather(run_gaap(), run_anomaly(), run_fraud())
             
-            compliance_findings, anomaly_findings, fraud_findings = results
+            gaap_findings, anomaly_findings, fraud_findings = results
             
-            all_findings.extend(compliance_findings)
+            all_findings.extend(gaap_findings)
             all_findings.extend(anomaly_findings)
             all_findings.extend(fraud_findings)
             
             stream_reasoning_step(f"Analysis complete. Found {len(all_findings)} total issues.", {
-                "accounting_standard": standard_name,
-                "compliance_count": len(compliance_findings),
+                "gaap_count": len(gaap_findings),
                 "anomaly_count": len(anomaly_findings),
                 "fraud_count": len(fraud_findings)
             })
             
             logger.info(f"[run_full_audit] Parallel analysis complete. Total findings: {len(all_findings)}")
-            report_progress(f"Analysis complete. Found {len(all_findings)} issues.", 50.0)
+            report_progress(f"Analysis complete. Found {len(all_findings)} issues.", 50.0, step_name="Analysis Complete")
             checkpoint("analysis_complete", {"findings": all_findings})
 
         # ========== Step 5: Enhance findings with AI reasoning ==========
@@ -321,7 +259,7 @@ class AuditEngine:
             
         if start_phase <= 5:
             logger.info("[run_full_audit] Step 5: Generating AI explanations for findings")
-            report_progress(f"Step 5/7: Generating AI explanations for {len(all_findings)} findings...", 55.0, current_step=5)
+            report_progress(f"Step 5/7: Generating AI explanations for {len(all_findings)} findings...", 55.0, current_step=5, step_name="AI Explanations")
             
             stream_reasoning_step("Generating AI explanations for findings", {
                 "description": "Using Gemini AI to generate human-readable explanations",
@@ -340,7 +278,7 @@ class AuditEngine:
                 handle_quota_exceeded  # Pass the callback!
             )
             
-            report_progress(f"Enhanced {len(enhanced_findings)} findings with AI explanations", 75.0)
+            report_progress(f"Enhanced {len(enhanced_findings)} findings with AI explanations", 75.0, step_name="Explanations Complete")
             
             # Add findings to audit record
             for finding in enhanced_findings:
@@ -354,26 +292,32 @@ class AuditEngine:
 
         if start_phase <= 6:
             logger.info("[run_full_audit] Step 6: Generating adjusting journal entries")
-            report_progress("Step 6/7: Generating adjusting journal entries...", 80.0, current_step=6)
+            report_progress("Step 6/7: Generating adjusting journal entries...", 80.0, current_step=6, step_name="Generating AJEs")
             
             stream_reasoning_step("Generating adjusting journal entries", {
                 "description": "Creating journal entries to correct identified issues",
                 "method": "Rule-based generation"
             })
             
-            # Stream each AJE as it is generated instead of waiting for all
+            # Resolve accounting standard (parameter or default)
+            from core.schemas import AccountingStandard as _AS
+            _acct_std = accounting_standard if accounting_standard is not None else _AS.GAAP
+
+            # Callback streams each AJE to the frontend the moment it is ready
             def on_aje_generated(aje: dict):
-                """Callback invoked per AJE so the frontend sees them immediately."""
                 audit_record.add_aje(aje)
                 stream_data("aje", aje)
 
             ajes = await self.aje_generator.generate_ajes(
-                enhanced_findings, coa, audit_record, accounting_standard,
+                enhanced_findings,
+                coa,
+                audit_record,
+                accounting_standard=_acct_std,
                 on_aje_callback=on_aje_generated,
             )
-
+                
             stream_reasoning_step(f"Generated {len(ajes)} adjusting journal entries", {"aje_count": len(ajes)})
-            report_progress(f"Generated {len(ajes)} adjusting journal entries", 85.0)
+            report_progress(f"Generated {len(ajes)} adjusting journal entries", 85.0, step_name="AJEs Complete")
             checkpoint("aje", {"findings": enhanced_findings, "ajes": ajes})
         else:
             ajes = []
@@ -383,7 +327,7 @@ class AuditEngine:
 
         if start_phase <= 7:
             logger.info("[run_full_audit] Step 7: Calculating risk score")
-            report_progress("Step 7/7: Calculating risk score...", 90.0, current_step=7)
+            report_progress("Step 7/7: Calculating risk score...", 90.0, current_step=7, step_name="Risk Assessment")
             
             stream_reasoning_step("Calculating risk score", {"description": "Computing overall audit risk based on findings"})
             
@@ -391,7 +335,7 @@ class AuditEngine:
             risk_score = await asyncio.to_thread(self.risk_scorer.calculate, enhanced_findings)
             
             stream_data("risk_score", risk_score)
-            report_progress(f"Risk level: {risk_score.get('risk_level', 'unknown').upper()}", 100.0)
+            report_progress(f"Risk level: {risk_score.get('risk_level', 'unknown').upper()}", 100.0, step_name="Complete")
         else:
             risk_score = {"risk_level": "unknown"}
         
@@ -400,8 +344,7 @@ class AuditEngine:
         return {
             "findings": enhanced_findings,
             "ajes": ajes,
-            "risk_score": risk_score,
-            "accounting_standard": accounting_standard.value
+            "risk_score": risk_score
         }
     
     def _validate_structure(self, gl, tb, coa) -> list[dict]:

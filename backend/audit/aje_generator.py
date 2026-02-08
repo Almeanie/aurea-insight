@@ -30,9 +30,9 @@ class AJEGenerator:
         """Generate AJEs for findings that can be corrected.
         
         Args:
-            on_aje_callback: Optional callable invoked with each AJE dict as
-                             soon as it is generated, so callers can stream it
-                             to clients immediately.
+            on_aje_callback: Optional callable(aje_dict) invoked immediately
+                after each AJE is generated so it can be streamed to the
+                frontend in real-time instead of waiting for the full batch.
         """
         logger.info(f"[generate_ajes] Processing {len(findings)} findings for AJE generation using {accounting_standard.value.upper()}")
         
@@ -65,18 +65,24 @@ class AJEGenerator:
                 logger.info(f"[generate_ajes] Generated AJE {aje['aje_id']} for finding {finding.get('finding_id')}")
                 # Stream this AJE to the client immediately
                 if on_aje_callback:
-                    on_aje_callback(aje)
+                    try:
+                        on_aje_callback(aje)
+                    except Exception:
+                        pass
         
         # If no AJEs generated due to quota, use deterministic fallback
         if len(ajes) == 0 and len(correctable) > 0:
             logger.info("[generate_ajes] Using deterministic AJE generation fallback")
             audit_record.add_reasoning_step(f"Using deterministic {accounting_standard.value.upper()} AJE rules (AI unavailable)")
             ajes = self._generate_deterministic_ajes(correctable, coa)
+            logger.info(f"[generate_ajes] Generated {len(ajes)} deterministic AJEs")
             # Stream deterministic AJEs too
             if on_aje_callback:
                 for aje in ajes:
-                    on_aje_callback(aje)
-            logger.info(f"[generate_ajes] Generated {len(ajes)} deterministic AJEs")
+                    try:
+                        on_aje_callback(aje)
+                    except Exception:
+                        pass
         
         logger.info(f"[generate_ajes] Successfully generated {len(ajes)} total AJEs")
         return ajes
