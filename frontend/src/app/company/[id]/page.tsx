@@ -1606,9 +1606,9 @@ export default function CompanyPage({ params }: PageProps) {
                             : "Run an audit first"}
                         </CardDescription>
                       </CardHeader>
-                      <CardContent>
+                      <CardContent className="overflow-hidden">
                         {ajes.length > 0 ? (
-                          <ScrollArea className="max-h-[60vh]">
+                          <div className="max-h-[60vh] overflow-y-auto overflow-x-hidden pr-2">
                             <div className="space-y-4">
                               {ajes.map((aje: any, idx: number) => (
                                 <AJEDetailCard
@@ -1625,7 +1625,7 @@ export default function CompanyPage({ params }: PageProps) {
                                 />
                               ))}
                             </div>
-                          </ScrollArea>
+                          </div>
                         ) : (
                           <div className="text-center py-12 text-muted-foreground">
                             <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -1656,9 +1656,9 @@ export default function CompanyPage({ params }: PageProps) {
                 </CardTitle>
                 <CardDescription>Ask questions about the audit</CardDescription>
               </CardHeader>
-              <CardContent className="flex-1 flex flex-col overflow-hidden">
+              <CardContent className="flex-1 flex flex-col overflow-hidden min-h-0">
                 {/* Chat Messages */}
-                <ScrollArea className="flex-1 pr-4" ref={chatRef}>
+                <div className="flex-1 overflow-y-auto pr-2 min-h-0" ref={chatRef}>
                   <div className="space-y-3">
                     {chatMessages.length === 0 && (
                       <div className="text-center text-muted-foreground text-sm py-8">
@@ -1688,10 +1688,10 @@ export default function CompanyPage({ params }: PageProps) {
                       </div>
                     )}
                   </div>
-                </ScrollArea>
+                </div>
 
-                {/* Chat Input */}
-                <div className="flex gap-2 mt-4 shrink-0">
+                {/* Chat Input - always pinned at bottom */}
+                <div className="flex gap-2 mt-4 shrink-0 pt-2 border-t border-[#1f1f1f]">
                   <Input
                     placeholder="Ask about the audit..."
                     value={chatInput}
