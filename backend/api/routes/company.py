@@ -477,15 +477,18 @@ async def upload_company_smart(
 ):
     """
     Smart upload with AI-powered data normalization.
-    Gemini analyzes and normalizes uploaded files automatically.
-    All AI decisions are logged in the audit trail.
+
+    * Supports multi-sheet Excel (.xlsx/.xls) and CSV
+    * Only sends a small sample to Gemini for column / sheet detection
+    * Processes all rows locally, chunked for large files (50 k rows/chunk)
+    * Handles files with up to 1 M rows; rejects anything larger
+    * All AI decisions are logged in the audit trail
     """
-    from core.gemini_client import GeminiClient
     from core.audit_trail import audit_trail
-    import json
-    
+    from parsers.normalizer import DataNormalizer
+
     logger.info(f"[upload_company_smart] Smart upload for: {company_name}")
-    
+
     company_id = str(uuid.uuid4())
     audit_record = audit_trail.create_record(
         audit_id=f"upload-{company_id}",
@@ -493,146 +496,104 @@ async def upload_company_smart(
         created_by="file_upload"
     )
     audit_record.input_type = "uploaded"
-    
+
     try:
-        gemini = GeminiClient()
-        
-        # Read GL file
+        normalizer = DataNormalizer()
+
+        # --- Main file (gl_file) -- may contain GL, COA, TB in sheets ---
         gl_content = await gl_file.read()
-        gl_text = gl_content.decode('utf-8', errors='ignore')[:10000]  # Limit for prompt
-        
+        filename = gl_file.filename or "upload.xlsx"
+
         audit_record.add_reasoning_step("Starting smart file upload", {
-            "file_name": gl_file.filename,
-            "file_size": len(gl_content),
-            "content_preview": gl_text[:500]
+            "file_name": filename,
+            "file_size_bytes": len(gl_content),
         })
-        
-        # Use AI to understand and normalize the data
-        result = await gemini.generate_json(
-            prompt=f"""Analyze this financial data and extract structured General Ledger entries.
 
-File name: {gl_file.filename}
-Content preview:
-{gl_text}
+        result = await normalizer.parse_upload(gl_content, filename, audit_record)
+        # result = {gl, coa, tb, detected_industry, detected_basis}
 
-Extract and return a JSON object with:
-{{
-    "company_name": "detected company name or use '{company_name}'",
-    "industry": "one of: saas, retail, manufacturing, healthcare, services",
-    "accounting_basis": "accrual or cash",
-    "entries": [
-        {{
-            "entry_id": "unique id",
-            "date": "YYYY-MM-DD",
-            "account_code": "account number",
-            "account_name": "account name",
-            "description": "transaction description",
-            "debit": 0.00,
-            "credit": 0.00,
-            "vendor_or_customer": "name if any"
-        }}
-    ],
-    "detected_issues": ["list of any data quality issues noticed"]
-}}
+        gl = result.get("gl")
+        coa = result.get("coa")
+        tb = result.get("tb")
 
-If you cannot parse the data, return {{"error": "description of the problem"}}
-""",
-            purpose="file_normalization"
-        )
-        
-        if result.get("audit"):
-            audit_record.add_gemini_interaction(result["audit"])
-        
-        if result.get("error"):
-            if "quota" in str(result.get("error", "")).lower():
-                audit_record.add_reasoning_step("AI normalization failed - quota exceeded")
-                raise HTTPException(
-                    status_code=429, 
-                    detail="AI quota exceeded. Please use 'Generate Data' or 'Use Example' instead."
-                )
-            raise HTTPException(status_code=400, detail=f"AI parsing error: {result.get('error')}")
-        
-        parsed = result.get("parsed", {})
-        
-        if parsed.get("error"):
-            raise HTTPException(status_code=400, detail=parsed["error"])
-        
-        # Create GL from parsed data
-        from datetime import datetime
-        from core.schemas import GLEntry, GeneralLedger
-        
-        gl_entries = []
-        for entry in parsed.get("entries", []):
-            try:
-                gl_entries.append(GLEntry(
-                    entry_id=entry.get("entry_id", f"UP-{uuid.uuid4().hex[:6]}"),
-                    date=datetime.strptime(entry.get("date", "2024-01-01"), "%Y-%m-%d").date(),
-                    account_code=str(entry.get("account_code", "0000")),
-                    account_name=entry.get("account_name", "Unknown"),
-                    description=entry.get("description", ""),
-                    debit=float(entry.get("debit", 0)),
-                    credit=float(entry.get("credit", 0)),
-                    vendor_or_customer=entry.get("vendor_or_customer")
-                ))
-            except Exception as e:
-                logger.warning(f"[upload_company_smart] Skipping entry: {e}")
-        
-        audit_record.add_reasoning_step(f"Parsed {len(gl_entries)} entries from uploaded file", {
-            "entries_parsed": len(gl_entries),
-            "detected_issues": parsed.get("detected_issues", [])
-        })
-        
-        # Detect industry from AI response
-        detected_industry = parsed.get("industry", "saas").lower()
+        if gl is None or len(gl.entries) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Could not parse any General Ledger entries from the uploaded file."
+            )
+
+        # --- Optional separate TB / COA files override sheet-detected ones --
+        if tb_file:
+            logger.info(f"[upload_company_smart] Parsing separate TB: {tb_file.filename}")
+            tb_content = await tb_file.read()
+            tb = await normalizer.parse_file(
+                tb_content, tb_file.filename or "tb.csv", "trial_balance", audit_record
+            )
+
+        if coa_file:
+            logger.info(f"[upload_company_smart] Parsing separate COA: {coa_file.filename}")
+            coa_content = await coa_file.read()
+            coa = await normalizer.parse_file(
+                coa_content, coa_file.filename or "coa.csv", "chart_of_accounts", audit_record
+            )
+
+        # --- Industry / basis detection ------------------------------------
+        detected_industry = (result.get("detected_industry") or "saas").lower()
         industry_map = {
             "saas": Industry.SAAS,
             "retail": Industry.RETAIL,
             "manufacturing": Industry.MANUFACTURING,
-            "healthcare": Industry.CONSULTING,  # Map healthcare to consulting
-            "services": Industry.CONSULTING,    # Map services to consulting
+            "healthcare": Industry.CONSULTING,
+            "services": Industry.CONSULTING,
             "consulting": Industry.CONSULTING,
             "ecommerce": Industry.ECOMMERCE,
-            "agency": Industry.AGENCY
+            "agency": Industry.AGENCY,
         }
         industry = industry_map.get(detected_industry, Industry.SAAS)
-        
-        # Detect accounting basis
-        detected_basis = parsed.get("accounting_basis", "accrual").lower()
+
+        detected_basis = (result.get("detected_basis") or "accrual").lower()
         basis = AccountingBasis.ACCRUAL if detected_basis == "accrual" else AccountingBasis.CASH
-        
-        # Create metadata
+
+        # --- Build metadata ------------------------------------------------
         metadata = CompanyMetadata(
             id=company_id,
-            name=parsed.get("company_name", company_name),
+            name=company_name,
             industry=industry,
             accounting_basis=basis,
             reporting_period="Uploaded Data",
-            is_synthetic=False
+            is_synthetic=False,
         )
-        
-        # Create GL
-        gl = GeneralLedger(
-            company_id=company_id,
-            period_start=min(e.date for e in gl_entries) if gl_entries else datetime.now().date(),
-            period_end=max(e.date for e in gl_entries) if gl_entries else datetime.now().date(),
-            entries=gl_entries
-        )
-        
+
+        # Stamp company_id into parsed objects
+        gl.company_id = company_id
+        if coa:
+            coa.company_id = company_id
+        if tb:
+            tb.company_id = company_id
+
         companies[company_id] = {
             "metadata": metadata,
             "gl": gl,
-            "coa": None,
-            "tb": None,
-            "upload_audit": audit_record.to_dict()
+            "coa": coa,
+            "tb": tb,
+            "upload_audit": audit_record.to_dict(),
         }
-        
+
         audit_trail.finalize_record(audit_record.audit_id)
-        
-        logger.info(f"[upload_company_smart] Company uploaded: {company_id} with {len(gl_entries)} entries")
+
+        logger.info(
+            f"[upload_company_smart] Company uploaded: {company_id} "
+            f"GL={len(gl.entries):,} entries, "
+            f"COA={'yes' if coa else 'no'}, TB={'yes' if tb else 'no'}"
+        )
         return metadata
-        
+
     except HTTPException:
         raise
+    except ValueError as e:
+        # Raised by normalizer for file-too-large or unsupported format
+        logger.warning(f"[upload_company_smart] Validation error: {e}")
+        raise HTTPException(status_code=413, detail=str(e))
     except Exception as e:
         logger.error(f"[upload_company_smart] Error: {str(e)}")
         logger.exception(e)

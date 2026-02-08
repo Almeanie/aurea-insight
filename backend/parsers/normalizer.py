@@ -4,6 +4,7 @@ Uses Gemini to parse and normalize uploaded financial data.
 All AI decisions are logged in the audit trail for regulatory compliance.
 """
 import pandas as pd
+import openpyxl
 import io
 import json
 from typing import Optional
@@ -16,6 +17,13 @@ from core.schemas import (
     GeneralLedger, JournalEntry, ChartOfAccounts, Account, 
     TrialBalance, TrialBalanceRow
 )
+
+# ---------------------------------------------------------------------------
+# Constants for chunked / large-file processing
+# ---------------------------------------------------------------------------
+CHUNK_SIZE = 50_000       # rows per processing chunk for large files
+MAX_ROWS_TOTAL = 1_000_000  # hard cap - reject files larger than this
+SAMPLE_ROWS = 15          # rows to sample per sheet for AI detection
 
 
 class DataNormalizer:
@@ -77,6 +85,566 @@ class DataNormalizer:
         else:
             raise ValueError(f"Unknown file type: {file_type}")
     
+    # =========================================================================
+    # Smart Upload  (multi-sheet Excel, CSV, chunked large files)
+    # =========================================================================
+
+    async def parse_upload(
+        self,
+        content: bytes,
+        filename: str,
+        audit_record: Optional[AuditRecord] = None,
+    ) -> dict:
+        """
+        Smart entry-point used by the upload-smart endpoint.
+
+        * Handles .xlsx / .xls (multi-sheet) and .csv
+        * Only sends a small sample to Gemini for column detection
+        * Processes all rows locally, chunked for large files
+
+        Returns:
+            {"gl": GeneralLedger | None,
+             "coa": ChartOfAccounts | None,
+             "tb": TrialBalance | None,
+             "detected_industry": str | None,
+             "detected_basis": str | None}
+        """
+        extension = filename.lower().rsplit(".", 1)[-1] if "." in filename else ""
+
+        if extension in ("xlsx", "xls"):
+            return await self._parse_excel_smart(content, filename, audit_record)
+        elif extension == "csv":
+            return await self._parse_csv_smart(content, filename, audit_record)
+        else:
+            raise ValueError(f"Unsupported file format: .{extension}")
+
+    # -- Excel (multi-sheet) -------------------------------------------------
+
+    async def _parse_excel_smart(
+        self,
+        content: bytes,
+        filename: str,
+        audit_record: Optional[AuditRecord] = None,
+    ) -> dict:
+        """Handle .xlsx/.xls - detect sheets, classify, parse each."""
+        file_bytes = io.BytesIO(content)
+
+        # 1. Lightweight probe: sheet names + row counts via openpyxl read-only
+        file_bytes.seek(0)
+        wb = openpyxl.load_workbook(file_bytes, read_only=True, data_only=True)
+        sheet_names = wb.sheetnames
+        sheet_row_counts: dict[str, int] = {}
+        for name in sheet_names:
+            ws = wb[name]
+            sheet_row_counts[name] = (ws.max_row or 1) - 1  # exclude header
+        wb.close()
+
+        total_rows = sum(sheet_row_counts.values())
+        if total_rows > MAX_ROWS_TOTAL:
+            raise ValueError(
+                f"File too large: ~{total_rows:,} rows across {len(sheet_names)} sheets. "
+                f"Maximum supported is {MAX_ROWS_TOTAL:,} rows."
+            )
+
+        # 2. Sample each sheet (first SAMPLE_ROWS rows only)
+        file_bytes.seek(0)
+        sheet_samples: dict[str, pd.DataFrame] = pd.read_excel(
+            file_bytes, sheet_name=None, nrows=SAMPLE_ROWS
+        )
+
+        if audit_record:
+            audit_record.add_reasoning_step("Excel file opened for smart parsing", {
+                "filename": filename,
+                "sheets": {n: {"rows": sheet_row_counts.get(n, 0),
+                               "columns": list(df.columns)}
+                           for n, df in sheet_samples.items()},
+                "total_rows": total_rows,
+            })
+
+        logger.info(
+            f"[_parse_excel_smart] {filename}: {len(sheet_names)} sheet(s), "
+            f"~{total_rows:,} total rows"
+        )
+
+        # 3. Classify sheets
+        if len(sheet_names) == 1:
+            # Single sheet -> treat as GL
+            classifications = {"general_ledger": sheet_names[0]}
+        else:
+            classifications = await self._classify_sheets(
+                sheet_samples, sheet_row_counts, filename, audit_record
+            )
+
+        # 4. Parse each classified sheet
+        result: dict = {
+            "gl": None, "coa": None, "tb": None,
+            "detected_industry": None, "detected_basis": None,
+        }
+
+        for data_type, sheet_name in classifications.items():
+            if not sheet_name or sheet_name not in sheet_samples:
+                continue
+
+            rows_in_sheet = sheet_row_counts.get(sheet_name, 0)
+            label = f"{filename}[{sheet_name}]"
+            logger.info(
+                f"[_parse_excel_smart] Parsing sheet '{sheet_name}' as "
+                f"{data_type} ({rows_in_sheet:,} rows)"
+            )
+
+            if data_type == "general_ledger":
+                if rows_in_sheet > CHUNK_SIZE:
+                    result["gl"] = await self._read_gl_chunked(
+                        content, sheet_name, label, audit_record
+                    )
+                else:
+                    file_bytes.seek(0)
+                    df = pd.read_excel(io.BytesIO(content), sheet_name=sheet_name)
+                    result["gl"] = await self._normalize_gl(df, label, audit_record)
+
+            elif data_type == "trial_balance":
+                file_bytes = io.BytesIO(content)
+                df = pd.read_excel(file_bytes, sheet_name=sheet_name)
+                result["tb"] = await self._normalize_tb(df, label, audit_record)
+
+            elif data_type == "chart_of_accounts":
+                file_bytes = io.BytesIO(content)
+                df = pd.read_excel(file_bytes, sheet_name=sheet_name)
+                result["coa"] = await self._normalize_coa(df, label, audit_record)
+
+        return result
+
+    async def _classify_sheets(
+        self,
+        sheet_samples: dict[str, pd.DataFrame],
+        sheet_row_counts: dict[str, int],
+        filename: str,
+        audit_record: Optional[AuditRecord] = None,
+    ) -> dict[str, str]:
+        """Use AI to classify which Excel sheet is GL / COA / TB."""
+
+        # Build a compact summary for Gemini
+        sheets_desc_parts = []
+        for name, df in sheet_samples.items():
+            preview = df.head(5).to_csv(index=False)
+            sheets_desc_parts.append(
+                f"SHEET: \"{name}\"  (approx {sheet_row_counts.get(name, '?')} rows)\n"
+                f"Columns: {list(df.columns)}\n"
+                f"Sample:\n{preview}"
+            )
+        sheets_desc = "\n---\n".join(sheets_desc_parts)
+
+        prompt = f"""You are a financial data analyst. An Excel workbook has been uploaded
+with the following sheets. Classify each sheet as one of:
+- general_ledger  (transaction journal / GL entries with dates, debits, credits)
+- trial_balance   (account balances summary)
+- chart_of_accounts  (list of accounts with codes and types)
+- unknown         (not financial data)
+
+FILE: {filename}
+
+{sheets_desc}
+
+Return JSON ONLY:
+{{
+    "classifications": {{
+        "general_ledger": "sheet_name_or_null",
+        "trial_balance": "sheet_name_or_null",
+        "chart_of_accounts": "sheet_name_or_null"
+    }},
+    "reasoning": "brief explanation"
+}}
+"""
+
+        result = await self.gemini.generate_json(
+            prompt=prompt, purpose="sheet_classification"
+        )
+
+        if audit_record and result.get("audit"):
+            audit_record.add_gemini_interaction(result["audit"])
+
+        parsed = result.get("parsed", {})
+        classifications_raw = parsed.get("classifications", {})
+
+        # Normalise: only keep entries whose value is a real sheet name
+        valid_names = set(sheet_samples.keys())
+        classifications = {}
+        for dtype in ("general_ledger", "trial_balance", "chart_of_accounts"):
+            val = classifications_raw.get(dtype)
+            if val and val in valid_names:
+                classifications[dtype] = val
+
+        if audit_record:
+            audit_record.add_reasoning_step("AI classified Excel sheets", {
+                "classifications": classifications,
+                "reasoning": parsed.get("reasoning", ""),
+            })
+
+        # If AI found nothing usable, fall back: largest sheet = GL
+        if not classifications:
+            largest = max(sheet_row_counts, key=sheet_row_counts.get)  # type: ignore[arg-type]
+            classifications["general_ledger"] = largest
+            if audit_record:
+                audit_record.add_reasoning_step(
+                    "Sheet classification fallback: largest sheet treated as GL",
+                    {"sheet": largest},
+                )
+
+        logger.info(f"[_classify_sheets] Classifications: {classifications}")
+        return classifications
+
+    # -- Chunked GL reading --------------------------------------------------
+
+    async def _read_gl_chunked(
+        self,
+        content: bytes,
+        sheet_name: str,
+        label: str,
+        audit_record: Optional[AuditRecord] = None,
+    ) -> GeneralLedger:
+        """
+        Read a large GL sheet in chunks using openpyxl streaming.
+
+        1. Sample first SAMPLE_ROWS rows for AI column detection.
+        2. Stream all rows through the detected mapping in CHUNK_SIZE batches.
+        """
+        logger.info(f"[_read_gl_chunked] Starting chunked read for '{label}'")
+
+        # Step 1 - AI column detection on a small sample
+        sample_df = pd.read_excel(
+            io.BytesIO(content), sheet_name=sheet_name, nrows=SAMPLE_ROWS
+        )
+        mapping_result = await self._ai_detect_gl_columns(sample_df, label, audit_record)
+
+        column_mapping = mapping_result.get("column_mapping", {})
+        parsed_config = mapping_result  # date_format, currency_symbol, etc.
+
+        if not column_mapping.get("date") or not column_mapping.get("account_code"):
+            # Fallback to heuristic if AI fails
+            column_mapping = await self._heuristic_detect_columns(
+                sample_df, "general_ledger"
+            )
+            parsed_config = {}
+
+        # Step 2 - Stream rows with openpyxl read-only
+        wb = openpyxl.load_workbook(
+            io.BytesIO(content), read_only=True, data_only=True
+        )
+        ws = wb[sheet_name]
+
+        # Build header-index map from first row
+        header_row = None
+        header_map: dict[str, int] = {}  # column_name -> col_index
+        entries: list[JournalEntry] = []
+        chunk_num = 0
+        rows_in_chunk = 0
+
+        for row_idx, row in enumerate(ws.iter_rows(values_only=True)):
+            if row_idx == 0:
+                header_row = [str(c) if c is not None else f"col_{i}" for i, c in enumerate(row)]
+                header_map = {name: idx for idx, name in enumerate(header_row)}
+                continue
+
+            # Build a pseudo-Series so helpers work
+            row_data = {}
+            for col_name, col_idx in header_map.items():
+                row_data[col_name] = row[col_idx] if col_idx < len(row) else None
+            row_series = pd.Series(row_data)
+
+            try:
+                entry_id = self._safe_get(
+                    row_series, column_mapping.get("entry_id"),
+                    f"GL-{row_idx:06d}"
+                )
+                date_val = self._safe_get(row_series, column_mapping.get("date"), "")
+                account_code = self._safe_get(
+                    row_series, column_mapping.get("account_code"), "0000"
+                )
+                account_name = self._safe_get(
+                    row_series, column_mapping.get("account_name"), ""
+                )
+                debit = self._parse_amount(
+                    row_series, column_mapping.get("debit"), parsed_config
+                )
+                credit = self._parse_amount(
+                    row_series, column_mapping.get("credit"), parsed_config
+                )
+                description = self._safe_get(
+                    row_series, column_mapping.get("description"), ""
+                )
+                vendor = self._safe_get(
+                    row_series, column_mapping.get("vendor_or_customer"), None
+                )
+
+                date_str = self._normalize_date(
+                    date_val, parsed_config.get("date_format")
+                )
+
+                entries.append(JournalEntry(
+                    entry_id=str(entry_id),
+                    date=date_str,
+                    account_code=str(account_code),
+                    account_name=str(account_name),
+                    debit=debit,
+                    credit=credit,
+                    description=str(description),
+                    vendor_or_customer=str(vendor) if vendor else None,
+                ))
+            except Exception as e:
+                logger.warning(f"[_read_gl_chunked] Skip row {row_idx}: {e}")
+
+            rows_in_chunk += 1
+            if rows_in_chunk >= CHUNK_SIZE:
+                chunk_num += 1
+                logger.info(
+                    f"[_read_gl_chunked] Chunk {chunk_num} done "
+                    f"({len(entries):,} entries so far)"
+                )
+                if audit_record:
+                    audit_record.add_reasoning_step(
+                        f"Processed chunk {chunk_num}", {"entries_so_far": len(entries)}
+                    )
+                rows_in_chunk = 0
+
+        wb.close()
+
+        if audit_record:
+            audit_record.add_reasoning_step(
+                f"Chunked GL parsing complete for '{label}'",
+                {"total_entries": len(entries), "chunks_processed": chunk_num + 1},
+            )
+
+        dates = [e.date for e in entries if e.date]
+        period_start = min(dates) if dates else ""
+        period_end = max(dates) if dates else ""
+
+        logger.info(f"[_read_gl_chunked] Done: {len(entries):,} entries from '{label}'")
+        return GeneralLedger(
+            company_id="uploaded",
+            entries=entries,
+            period_start=period_start,
+            period_end=period_end,
+        )
+
+    async def _ai_detect_gl_columns(
+        self,
+        sample_df: pd.DataFrame,
+        label: str,
+        audit_record: Optional[AuditRecord] = None,
+    ) -> dict:
+        """
+        Run AI column detection on a sample DataFrame and return the
+        parsed config dict (column_mapping, date_format, etc.).
+        Does NOT build entries -- only detects the mapping.
+        """
+        sample_rows = sample_df.head(SAMPLE_ROWS).to_csv(index=False)
+        all_columns = list(sample_df.columns)
+
+        prompt = f"""You are a financial data parser. Analyze this General Ledger file and identify the column mappings.
+
+FILE NAME: {label}
+COLUMNS FOUND: {all_columns}
+
+SAMPLE DATA (first rows):
+{sample_rows}
+
+TASK: Identify which columns correspond to these required fields:
+- entry_id: Transaction/entry identifier
+- date: Transaction date
+- account_code: Account number/code
+- account_name: Account name/description
+- debit: Debit amount
+- credit: Credit amount
+- description: Transaction description/memo
+- vendor_or_customer: Vendor or customer name (optional)
+
+Also detect:
+- date_format: The format of dates (e.g., "YYYY-MM-DD", "MM/DD/YYYY")
+- currency_symbol: If amounts have currency symbols
+- has_thousands_separator: If amounts use commas for thousands
+
+RETURN JSON ONLY:
+{{
+    "column_mapping": {{
+        "entry_id": "actual_column_name_or_null",
+        "date": "actual_column_name",
+        "account_code": "actual_column_name",
+        "account_name": "actual_column_name_or_null",
+        "debit": "actual_column_name",
+        "credit": "actual_column_name",
+        "description": "actual_column_name_or_null",
+        "vendor_or_customer": "actual_column_name_or_null"
+    }},
+    "date_format": "detected format",
+    "currency_symbol": "$" or null,
+    "has_thousands_separator": true/false,
+    "parsing_notes": ["any observations about the data"]
+}}
+"""
+
+        result = await self.gemini.generate_json(
+            prompt=prompt, purpose="gl_column_detection"
+        )
+
+        if audit_record and result.get("audit"):
+            audit_record.add_gemini_interaction(result["audit"])
+
+        if result.get("error"):
+            logger.warning(f"[_ai_detect_gl_columns] AI failed: {result.get('error')}")
+            if audit_record:
+                audit_record.add_reasoning_step(
+                    "AI column detection failed (chunked path)", {"error": result.get("error")}
+                )
+            return {}
+
+        parsed = result.get("parsed", {})
+
+        if audit_record:
+            audit_record.add_reasoning_step("AI detected column mappings (chunked path)", {
+                "mapping": parsed.get("column_mapping", {}),
+                "parsing_notes": parsed.get("parsing_notes", []),
+            })
+
+        return parsed
+
+    # -- CSV smart parsing ---------------------------------------------------
+
+    async def _parse_csv_smart(
+        self,
+        content: bytes,
+        filename: str,
+        audit_record: Optional[AuditRecord] = None,
+    ) -> dict:
+        """Parse a CSV file, with chunked support for large files."""
+        file_bytes = io.BytesIO(content)
+
+        # Quick row count estimate (count newlines)
+        line_count = content.count(b"\n")
+        if line_count > MAX_ROWS_TOTAL:
+            raise ValueError(
+                f"CSV too large: ~{line_count:,} rows. "
+                f"Maximum supported is {MAX_ROWS_TOTAL:,} rows."
+            )
+
+        if audit_record:
+            audit_record.add_reasoning_step("CSV file opened for smart parsing", {
+                "filename": filename,
+                "approx_rows": line_count,
+            })
+
+        logger.info(f"[_parse_csv_smart] {filename}: ~{line_count:,} rows")
+
+        if line_count <= CHUNK_SIZE:
+            # Small file: read all at once, delegate to existing normalizer
+            file_bytes.seek(0)
+            df = pd.read_csv(file_bytes)
+            gl = await self._normalize_gl(df, filename, audit_record)
+            return {
+                "gl": gl, "coa": None, "tb": None,
+                "detected_industry": None, "detected_basis": None,
+            }
+
+        # Large CSV: chunked processing
+        # Step 1 - AI detection on sample
+        file_bytes.seek(0)
+        sample_df = pd.read_csv(file_bytes, nrows=SAMPLE_ROWS)
+        mapping_result = await self._ai_detect_gl_columns(sample_df, filename, audit_record)
+
+        column_mapping = mapping_result.get("column_mapping", {})
+        parsed_config = mapping_result
+
+        if not column_mapping.get("date") or not column_mapping.get("account_code"):
+            column_mapping = await self._heuristic_detect_columns(
+                sample_df, "general_ledger"
+            )
+            parsed_config = {}
+
+        # Step 2 - Read in chunks
+        entries: list[JournalEntry] = []
+        file_bytes.seek(0)
+        chunk_num = 0
+        entry_counter = 0
+
+        for chunk_df in pd.read_csv(file_bytes, chunksize=CHUNK_SIZE):
+            chunk_num += 1
+            for _, row in chunk_df.iterrows():
+                try:
+                    entry_id = self._safe_get(
+                        row, column_mapping.get("entry_id"), f"GL-{entry_counter:06d}"
+                    )
+                    date_val = self._safe_get(row, column_mapping.get("date"), "")
+                    account_code = self._safe_get(
+                        row, column_mapping.get("account_code"), "0000"
+                    )
+                    account_name = self._safe_get(
+                        row, column_mapping.get("account_name"), ""
+                    )
+                    debit = self._parse_amount(
+                        row, column_mapping.get("debit"), parsed_config
+                    )
+                    credit = self._parse_amount(
+                        row, column_mapping.get("credit"), parsed_config
+                    )
+                    description = self._safe_get(
+                        row, column_mapping.get("description"), ""
+                    )
+                    vendor = self._safe_get(
+                        row, column_mapping.get("vendor_or_customer"), None
+                    )
+                    date_str = self._normalize_date(
+                        date_val, parsed_config.get("date_format")
+                    )
+
+                    entries.append(JournalEntry(
+                        entry_id=str(entry_id),
+                        date=date_str,
+                        account_code=str(account_code),
+                        account_name=str(account_name),
+                        debit=debit,
+                        credit=credit,
+                        description=str(description),
+                        vendor_or_customer=str(vendor) if vendor else None,
+                    ))
+                    entry_counter += 1
+                except Exception as e:
+                    logger.warning(f"[_parse_csv_smart] Skip row: {e}")
+                    entry_counter += 1
+
+            logger.info(
+                f"[_parse_csv_smart] Chunk {chunk_num} done "
+                f"({len(entries):,} entries so far)"
+            )
+            if audit_record:
+                audit_record.add_reasoning_step(
+                    f"CSV chunk {chunk_num} processed",
+                    {"entries_so_far": len(entries)},
+                )
+
+        if audit_record:
+            audit_record.add_reasoning_step("CSV chunked parsing complete", {
+                "total_entries": len(entries),
+                "chunks": chunk_num,
+            })
+
+        dates = [e.date for e in entries if e.date]
+        period_start = min(dates) if dates else ""
+        period_end = max(dates) if dates else ""
+
+        gl = GeneralLedger(
+            company_id="uploaded",
+            entries=entries,
+            period_start=period_start,
+            period_end=period_end,
+        )
+        return {
+            "gl": gl, "coa": None, "tb": None,
+            "detected_industry": None, "detected_basis": None,
+        }
+
+    # =========================================================================
+    # Existing normalizers (unchanged)
+    # =========================================================================
+
     async def _normalize_gl(
         self, 
         df: pd.DataFrame, 

@@ -234,6 +234,7 @@ class AuditEngine:
             
             for finding in structural_findings:
                 stream_data("finding", finding)
+                await asyncio.sleep(0.07)
             
             checkpoint("structural", {"findings": all_findings})
 
@@ -264,7 +265,9 @@ class AuditEngine:
                 # Tag findings with the accounting standard used
                 for f in findings:
                     f["accounting_standard_used"] = accounting_standard.value
-                for f in findings: stream_data("finding", f)
+                for f in findings:
+                    stream_data("finding", f)
+                    await asyncio.sleep(0.07)
                 return findings
 
             async def run_anomaly():
@@ -274,7 +277,9 @@ class AuditEngine:
                 })
                 # CPU-bound, run in thread to avoid blocking event loop
                 findings = await asyncio.to_thread(self.anomaly_detector.detect_anomalies, gl)
-                for f in findings: stream_data("finding", f)
+                for f in findings:
+                    stream_data("finding", f)
+                    await asyncio.sleep(0.07)
                 return findings
 
             async def run_fraud():
@@ -284,7 +289,9 @@ class AuditEngine:
                 })
                 # CPU-bound, run in thread to avoid blocking event loop
                 findings = await asyncio.to_thread(self.fraud_detector.detect_fraud_patterns, gl)
-                for f in findings: stream_data("finding", f)
+                for f in findings:
+                    stream_data("finding", f)
+                    await asyncio.sleep(0.07)
                 return findings
 
             # --- Execute in Parallel ---
