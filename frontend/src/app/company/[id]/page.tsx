@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScrollArea } from "@/components/ui/scroll-area";
+
 import { Input } from "@/components/ui/input";
 import {
   Select,
@@ -1461,8 +1461,8 @@ export default function CompanyPage({ params }: PageProps) {
                         <CardTitle>Chart of Accounts</CardTitle>
                         <CardDescription>{coa?.accounts?.length || 0} accounts</CardDescription>
                       </CardHeader>
-                      <CardContent>
-                        <ScrollArea className="max-h-[50vh]">
+                      <CardContent className="overflow-hidden">
+                        <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden">
                           <Table>
                             <TableHeader>
                               <TableRow className="border-[#1f1f1f]">
@@ -1483,7 +1483,7 @@ export default function CompanyPage({ params }: PageProps) {
                               ))}
                             </TableBody>
                           </Table>
-                        </ScrollArea>
+                        </div>
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -1494,8 +1494,8 @@ export default function CompanyPage({ params }: PageProps) {
                         <CardTitle>General Ledger</CardTitle>
                         <CardDescription>{gl?.entries?.length || 0} entries | {gl?.period_start} to {gl?.period_end}</CardDescription>
                       </CardHeader>
-                      <CardContent>
-                        <ScrollArea className="max-h-[50vh]">
+                      <CardContent className="overflow-hidden">
+                        <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden">
                           <Table>
                             <TableHeader>
                               <TableRow className="border-[#1f1f1f]">
@@ -1522,7 +1522,7 @@ export default function CompanyPage({ params }: PageProps) {
                               ))}
                             </TableBody>
                           </Table>
-                        </ScrollArea>
+                        </div>
                       </CardContent>
                     </Card>
                   </TabsContent>
@@ -1535,8 +1535,8 @@ export default function CompanyPage({ params }: PageProps) {
                           {tb?.rows?.length || 0} accounts | {tb?.period_end}
                         </CardDescription>
                       </CardHeader>
-                      <CardContent>
-                        <ScrollArea className="max-h-[50vh]">
+                      <CardContent className="overflow-hidden">
+                        <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden">
                           <Table>
                             <TableHeader>
                               <TableRow className="border-[#1f1f1f]">
@@ -1582,7 +1582,7 @@ export default function CompanyPage({ params }: PageProps) {
                               )}
                             </TableBody>
                           </Table>
-                        </ScrollArea>
+                        </div>
                       </CardContent>
                     </Card>
                   </TabsContent>
