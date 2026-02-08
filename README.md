@@ -78,6 +78,188 @@ API Lookup --> Gemini Classification --> Auto-Enrichment --> Red Flags?
 
 ---
 
+## System Architecture
+
+### Design Philosophy
+
+A critical design decision in Aurea Insight is the **strict separation between detection and explanation**. The audit engine does not use AI to decide what is wrong. All detection -- compliance violations, anomalies, fraud patterns -- is performed by deterministic, rule-based, and statistical algorithms. AI (Gemini) is used downstream to explain findings, generate corrective entries, parse uploaded files, and power the chatbot.
+
+This means audit results are **reproducible and explainable**: the same input always produces the same findings, regardless of AI model behavior. Every Gemini interaction is logged in the audit trail for regulatory transparency.
+
+### High-Level Flow
+
+```
+                                    +-------------------+
+                                    |   Frontend        |
+                                    |   (Next.js 16)    |
+                                    +--------+----------+
+                                             |
+                                       SSE Stream + REST
+                                             |
+                                    +--------v----------+
+                                    |   FastAPI Backend  |
+                                    +--------+----------+
+                                             |
+              +------------------------------+------------------------------+
+              |                              |                              |
+     +--------v--------+         +----------v----------+         +---------v---------+
+     |  Audit Engine    |         | Ownership Discovery |         | Auditor Assistant |
+     |  (Deterministic) |         | (APIs + AI parsing) |         | (AI Chatbot)      |
+     +---------+--------+         +----------+----------+         +---------+---------+
+               |                             |                              |
+   +-----------+-----------+        +--------+--------+             +-------v-------+
+   |     |     |     |     |        |        |        |             |   Gemini 3    |
+   v     v     v     v     v        v        v        v             | (Q&A only)    |
+ GAAP  IFRS  Anom  Fraud Risk    SEC      GLEIF   Gemini           +---------------+
+ Rules Rules  Det   Det  Score   EDGAR     API    (classify
+  |     |     |     |     |                        + parse)
+  |     |     |     |     |
+  +--+--+--+--+--+--+     |
+     |              |      |
+     v              v      v
+  Findings     AI Enhance  Risk
+  (raw)        (Gemini)    Score
+     |
+     v
+  AJE Generator
+  (Gemini + fallback)
+```
+
+### The 7-Step Audit Pipeline
+
+The audit engine runs a sequential pipeline. Steps 2-4 execute in parallel for performance.
+
+| Step | Name | Method | Uses AI? |
+|------|------|--------|----------|
+| 1 | **Data Validation** | Structural checks (balance verification, data types) | No |
+| 2 | **GAAP/IFRS Compliance** | Rule-based pattern matching against accounting standards | No |
+| 3 | **Anomaly Detection** | Statistical algorithms (Benford's Law, Z-scores) | No |
+| 4 | **Fraud Detection** | Pattern matching (duplicates, structuring, round-tripping) | No |
+| 5 | **AI Enhancement** | Gemini generates human-readable explanations for each finding | Yes |
+| 6 | **AJE Generation** | Gemini generates correcting journal entries (deterministic fallback) | Yes (with fallback) |
+| 7 | **Risk Scoring** | Weighted formula: Critical=10, High=5, Medium=2, Low=1 | No |
+
+Steps 2-4 run concurrently via `asyncio.gather()` and produce raw findings. Step 5 enhances those findings with AI explanations. Step 6 generates AJEs. Step 7 computes the final risk score.
+
+### What the Audit Engine Does (No AI)
+
+**GAAP Compliance** (`gaap_rules.py`):
+- Approval control checks (transactions > $5,000 without approval)
+- Expense classification validation (keyword matching)
+- Revenue recognition timing (period-end large entries, ASC 606)
+- Matching principle violations (unamortized prepaids)
+- Cash basis compliance checks
+
+**IFRS Compliance** (`ifrs_rules.py`):
+- LIFO prohibition detection (LIFO not allowed under IFRS)
+- Inventory NRV write-down/reversal checks
+- PPE revaluation detection (allowed under IFRS)
+- Impairment reversal analysis (IAS 36)
+- Development cost capitalization criteria (IAS 38)
+- Provision validation (IAS 37)
+- Lease recognition checks (IFRS 16)
+- Related party transaction flagging
+
+**Anomaly Detection** (`anomaly_detection.py`):
+- Benford's Law analysis (chi-square test on first-digit distribution)
+- Statistical outlier detection (Z-score, flags |z| > 3)
+- Timing anomalies (Z-score on daily transaction volume)
+
+**Fraud Detection** (`fraud_detection.py`):
+- Duplicate payment detection (same vendor + amount + date proximity)
+- Structuring/smurfing (clusters of transactions just under $10,000)
+- Suspiciously round amounts ($1,000, $5,000, etc.)
+- Shell company indicators (generic vendor names)
+- Round-tripping (circular payment-receipt patterns)
+- Weekend/holiday transactions (temporal anomalies)
+- Vendor-customer overlap (same entity on both sides)
+
+**Risk Scorer** (`risk_scorer.py`):
+- Weighted severity scoring normalized to 0-100
+- Risk levels: Critical (>=75 or >=2 critical findings), High (>=50), Medium (>=25), Low (<25)
+
+### What Gemini AI Does
+
+AI is used in five specific areas, always with fallback mechanisms:
+
+| Area | Purpose | Fallback |
+|------|---------|----------|
+| **Finding Explanations** | Generate clear, professional explanations for each audit finding | Finding is returned without explanation |
+| **AJE Generation** | Create context-aware correcting journal entries from findings + chart of accounts | 10 deterministic rule templates |
+| **File Parsing** | Detect column mappings when users upload arbitrary Excel/CSV files | Heuristic column name matching |
+| **Ownership Classification** | Classify entities discovered from public registries, parse complex filings | Entity stored with "unknown" classification |
+| **Auditor Assistant** | Answer natural-language questions about audit results | Keyword-based pattern matching on common questions |
+
+Every Gemini call is:
+- Logged with full prompt and response text
+- Hashed for integrity verification
+- Visible in the Audit Trail tab
+- Rate-limited (15 req/min with exponential backoff)
+- Protected by quota detection (graceful degradation when limits hit)
+
+### Streaming Architecture
+
+The platform uses Server-Sent Events (SSE) to stream audit progress to the frontend in real time.
+
+```
+Backend                              Frontend
++------------------+                 +------------------+
+| Audit Engine     |                 | React State      |
+|   |               |                 |   |               |
+|   +--stream_data()-+-> Progress --> SSE --> EventSource  |
+|   |  (finding)    |    Tracker     Stream   onmessage   |
+|   +--stream_data()-+-> (Queue)              |            |
+|   |  (aje)        |                         v            |
+|   +--stream_data()-+               | setFindings()      |
+|      (risk_score) |                | setAjes()          |
++------------------+                 | setRiskScore()     |
+                                     +------------------+
+```
+
+1. The audit engine calls `stream_data()` after each individual finding, AJE, or score
+2. The `ProgressTracker` pushes events to subscriber queues
+3. The SSE endpoint reads from the queue and yields JSON events
+4. The frontend `EventSource` processes each event and updates React state immediately
+5. Findings appear one-by-one as they are discovered, not in a batch at the end
+
+### Ownership Discovery Architecture
+
+Ownership discovery follows a "real data first, AI for parsing" approach:
+
+```
+Vendor List (from GL)
+        |
+        v
++-------+--------+      +----------+      +-----------+
+| SEC EDGAR API  |----->| Raw API  |----->| Gemini    |-----> Classified
+| GLEIF API      |      | Response |      | Classify  |      Entity Node
++----------------+      +----------+      +-----------+
+        |
+        | (if not found)
+        v
++----------------+      +----------+      +-----------+
+| Gemini Web     |----->| Search   |----->| Gemini    |-----> Enriched
+| Search         |      | Results  |      | Parse     |      Entity Node
++----------------+      +----------+      +-----------+
+                                                |
+                                                v
+                                    +---------------------+
+                                    | Graph Analysis      |
+                                    | (NetworkX)          |
+                                    | - Circular ownership|
+                                    | - Common controllers|
+                                    | - Secrecy juris.    |
+                                    +---------------------+
+```
+
+1. For each vendor in the General Ledger, the system queries real public registries (SEC EDGAR, GLEIF)
+2. If found, Gemini classifies the entity (type, risk level, jurisdiction) from the API response
+3. If not found in registries, Gemini performs a web search and parses the results
+4. Ownership relationships are built into a graph and streamed to the frontend node-by-node
+5. NetworkX runs algorithmic fraud pattern detection on the graph (circular ownership, common controllers, secrecy jurisdictions)
+
+---
+
 ## Tech Stack
 
 ### Frontend
