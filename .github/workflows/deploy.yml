@@ -48,7 +48,7 @@ jobs:
               --memory 1Gi \
               --cpu 1 \
               --port 8000 \
-              --timeout 300 \
+              --timeout 900 \
               --quiet; then
               echo "Backend deployed successfully."
               break

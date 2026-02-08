@@ -567,17 +567,22 @@ export default function CompanyPage({ params }: PageProps) {
           }
         };
 
+        let sseCompleted = false;
+
         eventSource.onerror = () => {
-          // SSE errors are normal when connection closes - don't treat as critical
-          if (isDiscoveringOwnership) {
-            console.warn("Ownership SSE connection closed");
+          // SSE errors are normal when connection closes
+          if (!sseCompleted) {
+            console.warn("Ownership SSE connection closed (possibly Cloud Run timeout)");
+            addReasoningStep("Stream connection closed. Checking results...", "info");
           }
           eventSource?.close();
         };
 
-        // Wait for SSE to signal completion
+        // Wait for SSE to signal completion or connection drop
         await new Promise<void>((resolve) => {
           const originalOnMessage = eventSource!.onmessage;
+          const originalOnError = eventSource!.onerror;
+
           eventSource!.onmessage = (event) => {
             if (originalOnMessage) {
               originalOnMessage.call(eventSource!, event);
@@ -585,21 +590,34 @@ export default function CompanyPage({ params }: PageProps) {
             try {
               const data = JSON.parse(event.data);
               if (data.type === 'end' || data.type === 'completed') {
+                sseCompleted = true;
                 resolve();
               }
             } catch (e) { }
           };
-          // Timeout after 5 minutes
-          setTimeout(() => resolve(), 300000);
+
+          eventSource!.onerror = (e) => {
+            if (originalOnError) {
+              (originalOnError as any).call(eventSource!, e);
+            }
+            // Resolve when connection drops so we can try to fetch results
+            resolve();
+          };
+
+          // Timeout after 10 minutes
+          setTimeout(() => resolve(), 600000);
         });
 
-        // Fetch the final graph data
+        // Try to fetch the final graph data
         addReasoningStep("Fetching complete ownership graph...", "info");
         const graphRes = await fetch(`${API_BASE_URL}/api/ownership/graph/${graphId}`);
         if (graphRes.ok) {
           const graphData = await graphRes.json();
           setOwnershipGraph(graphData);
           addReasoningStep(`Graph loaded: ${graphData.nodes?.length || 0} entities, ${graphData.edges?.length || 0} relationships`, "success");
+        } else {
+          // Graph not ready yet -- if we have streaming data, use it as-is
+          addReasoningStep("Full graph not yet available -- using streamed data.", "info");
         }
 
         // Fetch final findings
@@ -1282,7 +1300,7 @@ export default function CompanyPage({ params }: PageProps) {
               <TabsContent value="trail">
                 <div className="grid md:grid-cols-2 gap-4">
                   {/* Reasoning Chain */}
-                  <Card className="bg-[#111111] border-[#1f1f1f]">
+                  <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Clock className="h-5 w-5 text-[#00d4ff]" />
@@ -1294,8 +1312,8 @@ export default function CompanyPage({ params }: PageProps) {
                           : isAuditing ? "Building reasoning chain..." : "Run an audit to see reasoning"}
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <ScrollArea className="max-h-[50vh]">
+                    <CardContent className="overflow-hidden">
+                      <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden">
                         {reasoningChain.length > 0 ? (
                           <div className="space-y-2">
                             {reasoningChain.map((step: any, idx: number) => (
@@ -1332,12 +1350,12 @@ export default function CompanyPage({ params }: PageProps) {
                             )}
                           </div>
                         )}
-                      </ScrollArea>
+                      </div>
                     </CardContent>
                   </Card>
 
                   {/* Gemini Interactions */}
-                  <Card className="bg-[#111111] border-[#1f1f1f]">
+                  <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Brain className="h-5 w-5 text-[#a855f7]" />
@@ -1349,8 +1367,8 @@ export default function CompanyPage({ params }: PageProps) {
                           : "AI interactions will appear here"}
                       </CardDescription>
                     </CardHeader>
-                    <CardContent>
-                      <ScrollArea className="max-h-[50vh]">
+                    <CardContent className="overflow-hidden">
+                      <div className="max-h-[50vh] overflow-y-auto overflow-x-hidden">
                         {geminiInteractions.length > 0 ? (
                           <div className="space-y-3">
                             {geminiInteractions.map((interaction: any, idx: number) => (
@@ -1400,7 +1418,7 @@ export default function CompanyPage({ params }: PageProps) {
                             )}
                           </div>
                         )}
-                      </ScrollArea>
+                      </div>
                     </CardContent>
                   </Card>
                 </div>
