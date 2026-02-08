@@ -264,6 +264,15 @@ export default function CompanyPage({ params }: PageProps) {
               setAuditStatus(data.status as any);
             }
 
+            // Show live step progress in console for info/success/ai types
+            if (data.type === 'info' || data.type === 'success' || data.type === 'ai') {
+              if (data.message && !data.data?.data_type) {
+                const stepType = data.type === 'ai' ? 'ai' :
+                  data.type === 'success' ? 'success' : 'info';
+                addReasoningStep(data.message, stepType);
+              }
+            }
+
             // Check for quota exceeded
             if (data.type === 'quota_exceeded' || data.status === 'quota_exceeded') {
               setAuditStatus("quota_exceeded");
@@ -290,16 +299,19 @@ export default function CompanyPage({ params }: PageProps) {
                 setStreamingFindings(prev => {
                   const existingIdx = prev.findIndex(f => f.finding_id === payload.finding_id);
                   if (existingIdx >= 0) {
-                    // Update existing finding with enhanced data
                     const updated = [...prev];
                     updated[existingIdx] = payload;
                     return updated;
                   }
+                  // Log new finding to console
+                  const sev = payload.severity?.toUpperCase() || "?";
+                  addReasoningStep(`Finding: [${sev}] ${payload.issue || payload.finding_id}`, sev === "CRITICAL" || sev === "HIGH" ? "warning" : "info");
                   return [...prev, payload];
                 });
               } else if (dataType === 'aje') {
                 // Add AJE to streaming list
                 setStreamingAjes(prev => [...prev, payload]);
+                addReasoningStep(`AJE generated: ${payload.aje_id} - ${payload.description?.substring(0, 60) || "correcting entry"}`, "success");
               } else if (dataType === 'risk_score') {
                 // Update risk score
                 setStreamingRiskScore(payload);
@@ -1012,7 +1024,7 @@ export default function CompanyPage({ params }: PageProps) {
 
               {/* Findings Tab */}
               <TabsContent value="findings">
-                <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
+                <Card className="bg-[#111111] border-[#1f1f1f]">
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       Audit Findings
@@ -1032,16 +1044,17 @@ export default function CompanyPage({ params }: PageProps) {
                   </CardHeader>
                   <CardContent>
                     {findings.length > 0 ? (
-                      <div className="max-h-[60vh] overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
-                        <Table className="w-full table-fixed">
+                      <ScrollArea className="max-h-[60vh]">
+                        <Table>
                           <TableHeader>
                             <TableRow className="border-[#1f1f1f] hover:bg-transparent">
-                              <TableHead className="text-muted-foreground w-[72px]">Severity</TableHead>
-                              <TableHead className="text-muted-foreground w-[90px]">Category</TableHead>
+                              <TableHead className="text-muted-foreground">Severity</TableHead>
+                              <TableHead className="text-muted-foreground">Category</TableHead>
                               <TableHead className="text-muted-foreground">Issue</TableHead>
-                              <TableHead className="text-muted-foreground text-right w-[80px]">Transactions</TableHead>
-                              <TableHead className="text-muted-foreground w-[56px]">Conf.</TableHead>
-                              <TableHead className="text-muted-foreground w-[52px]">Action</TableHead>
+                              <TableHead className="text-muted-foreground text-right">Txns</TableHead>
+                              <TableHead className="text-muted-foreground text-right">Amount</TableHead>
+                              <TableHead className="text-muted-foreground">Confidence</TableHead>
+                              <TableHead className="text-muted-foreground w-24">Action</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1063,8 +1076,8 @@ export default function CompanyPage({ params }: PageProps) {
                                     setFindingDialogOpen(true);
                                   }}
                                 >
-                                  <TableCell className="overflow-hidden px-2">
-                                    <Badge className={`text-[10px] px-1.5 py-0
+                                  <TableCell>
+                                    <Badge className={`
                                     ${finding.severity === "critical" ? "bg-[#ff3366] hover:bg-[#ff3366]" : ""}
                                     ${finding.severity === "high" ? "bg-[#ff6b35] hover:bg-[#ff6b35]" : ""}
                                     ${finding.severity === "medium" ? "bg-[#fbbf24] text-black hover:bg-[#fbbf24]" : ""}
@@ -1073,51 +1086,61 @@ export default function CompanyPage({ params }: PageProps) {
                                       {finding.severity?.toUpperCase()}
                                     </Badge>
                                   </TableCell>
-                                  <TableCell className="text-muted-foreground capitalize text-xs truncate overflow-hidden px-2">{finding.category}</TableCell>
-                                  <TableCell className="overflow-hidden px-2">
-                                    <div className="font-medium truncate text-sm">{finding.issue}</div>
-                                    <div className="text-xs text-muted-foreground mt-0.5 truncate">{finding.details?.substring(0, 50)}...</div>
+                                  <TableCell className="text-muted-foreground capitalize">{finding.category}</TableCell>
+                                  <TableCell className="max-w-[300px]">
+                                    <div className="font-medium truncate">{finding.issue}</div>
+                                    <div className="text-xs text-muted-foreground mt-1 line-clamp-2 overflow-hidden">{finding.details?.substring(0, 80)}...</div>
                                     {(finding.ifrs_standard || finding.gaap_principle) && (
-                                      <div className="text-[10px] text-[#a855f7] mt-0.5 flex items-center gap-1 overflow-hidden">
+                                      <div className="text-xs text-[#a855f7] mt-1 flex items-center gap-1 overflow-hidden">
                                         <Shield className="h-3 w-3 shrink-0" />
                                         <span className="truncate">{finding.ifrs_standard || finding.gaap_principle}</span>
                                       </div>
                                     )}
                                     {finding.detection_method && (
-                                      <div className="text-[10px] text-[#00d4ff] mt-0.5 flex items-center gap-1 overflow-hidden">
+                                      <div className="text-xs text-[#00d4ff] mt-1 flex items-center gap-1 overflow-hidden">
                                         <Code className="h-3 w-3 shrink-0" />
-                                        <span className="truncate">{finding.detection_method.substring(0, 40)}...</span>
+                                        <span className="truncate">{finding.detection_method.substring(0, 50)}...</span>
                                       </div>
                                     )}
                                   </TableCell>
-                                  <TableCell className="text-right financial-number text-muted-foreground text-xs px-2">
+                                  <TableCell className="text-right financial-number text-muted-foreground">
                                     {(() => {
                                       const txnCount = finding.affected_transactions?.length || finding.transaction_details?.length || 0;
                                       return txnCount > 0 ? txnCount : "-";
                                     })()}
                                   </TableCell>
-                                  <TableCell className="financial-number text-xs px-2">
+                                  <TableCell className="text-right financial-number">
+                                    {(() => {
+                                      const txDetails = finding.transaction_details;
+                                      if (!txDetails || txDetails.length === 0) return <span className="text-muted-foreground">-</span>;
+                                      const total = txDetails.reduce((sum: number, tx: any) => sum + (tx.debit || 0) + (tx.credit || 0), 0) / 2;
+                                      return <span className="text-[#ff6b35]">${total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>;
+                                    })()}
+                                  </TableCell>
+                                  <TableCell className="financial-number">
                                     <div>{Math.round((finding.confidence || 0) * 100)}%</div>
                                     {finding.ai_explanation && !finding.ai_explanation.includes("skipped") ? (
-                                      <div className="flex items-center gap-0.5 mt-0.5" title="AI explanation available">
-                                        <Brain className="h-3 w-3 text-[#a855f7] shrink-0" />
-                                        <span className="text-[9px] text-[#a855f7]">AI</span>
+                                      <div className="flex items-center gap-1 mt-1" title="AI explanation available">
+                                        <Brain className="h-3 w-3 text-[#a855f7]" />
+                                        <span className="text-[10px] text-[#a855f7]">AI Ready</span>
                                       </div>
                                     ) : isAuditing ? (
-                                      <div className="flex items-center gap-0.5 mt-0.5" title="Generating AI explanation...">
-                                        <Loader2 className="h-3 w-3 text-[#00d4ff] animate-spin shrink-0" />
+                                      <div className="flex items-center gap-1 mt-1" title="Generating AI explanation...">
+                                        <Loader2 className="h-3 w-3 text-[#00d4ff] animate-spin" />
+                                        <span className="text-[10px] text-[#00d4ff]">Loading</span>
                                       </div>
                                     ) : (
-                                      <div className="flex items-center gap-0.5 mt-0.5" title="AI explanation not available">
-                                        <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
+                                      <div className="flex items-center gap-1 mt-1" title="AI explanation not available">
+                                        <Lock className="h-3 w-3 text-muted-foreground" />
+                                        <span className="text-[10px] text-muted-foreground">Pending</span>
                                       </div>
                                     )}
                                   </TableCell>
-                                  <TableCell className="px-2">
+                                  <TableCell>
                                     <Button
                                       variant="ghost"
-                                      size="icon"
-                                      className={`h-7 w-7 ${isClickable
+                                      size="sm"
+                                      className={`${isClickable
                                         ? 'text-[#00d4ff] hover:text-[#00d4ff] hover:bg-[#00d4ff]/10'
                                         : 'text-muted-foreground cursor-not-allowed'
                                         }`}
@@ -1130,9 +1153,15 @@ export default function CompanyPage({ params }: PageProps) {
                                       }}
                                     >
                                       {isProcessing ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
+                                        <>
+                                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                                          Processing
+                                        </>
                                       ) : (
-                                        <Eye className="h-4 w-4" />
+                                        <>
+                                          <Eye className="h-4 w-4 mr-1" />
+                                          View
+                                        </>
                                       )}
                                     </Button>
                                   </TableCell>
@@ -1141,7 +1170,7 @@ export default function CompanyPage({ params }: PageProps) {
                             })}
                           </TableBody>
                         </Table>
-                      </div>
+                      </ScrollArea>
                     ) : (
                       <div className="text-center py-12 text-muted-foreground">
                         <Shield className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -1157,7 +1186,7 @@ export default function CompanyPage({ params }: PageProps) {
 
               {/* Ownership Tab */}
               <TabsContent value="ownership">
-                <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
+                <Card className="bg-[#111111] border-[#1f1f1f]">
                   <CardHeader className="flex flex-row items-center justify-between">
                     <div>
                       <CardTitle>Beneficial Ownership Network</CardTitle>
@@ -1271,10 +1300,10 @@ export default function CompanyPage({ params }: PageProps) {
               </TabsContent>
 
               {/* Audit Trail Tab */}
-              <TabsContent value="trail" className="overflow-hidden">
+              <TabsContent value="trail">
                 <div className="grid md:grid-cols-2 gap-4">
                   {/* Reasoning Chain */}
-                  <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
+                  <Card className="bg-[#111111] border-[#1f1f1f]">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Clock className="h-5 w-5 text-[#00d4ff]" />
@@ -1287,7 +1316,7 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <div className="max-h-[50vh] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
+                      <ScrollArea className="max-h-[50vh]">
                         {reasoningChain.length > 0 ? (
                           <div className="space-y-2">
                             {reasoningChain.map((step: any, idx: number) => (
@@ -1305,7 +1334,7 @@ export default function CompanyPage({ params }: PageProps) {
                                 </div>
                                 <div className="flex-1 min-w-0 overflow-hidden">
                                   <div className="text-xs text-muted-foreground font-mono truncate">{step.timestamp}</div>
-                                  <div className="text-sm mt-1 break-words line-clamp-2">{step.step}</div>
+                                  <div className="text-sm mt-1 wrap-break-word line-clamp-2">{step.step}</div>
                                 </div>
                                 <Eye className="h-4 w-4 text-[#00d4ff] opacity-50 shrink-0" />
                               </div>
@@ -1324,12 +1353,12 @@ export default function CompanyPage({ params }: PageProps) {
                             )}
                           </div>
                         )}
-                      </div>
+                      </ScrollArea>
                     </CardContent>
                   </Card>
 
                   {/* Gemini Interactions */}
-                  <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
+                  <Card className="bg-[#111111] border-[#1f1f1f]">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Brain className="h-5 w-5 text-[#a855f7]" />
@@ -1342,40 +1371,40 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardDescription>
                     </CardHeader>
                     <CardContent>
-                      <div className="max-h-[50vh] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
+                      <ScrollArea className="max-h-[50vh]">
                         {geminiInteractions.length > 0 ? (
                           <div className="space-y-3">
                             {geminiInteractions.map((interaction: any, idx: number) => (
                               <div
                                 key={idx}
-                                className="p-3 rounded bg-[#0a0a0a] border border-[#1f1f1f] cursor-pointer hover:border-[#a855f7] transition-colors overflow-hidden"
+                                className="p-3 rounded bg-[#0a0a0a] border border-[#1f1f1f] cursor-pointer hover:border-[#a855f7] transition-colors"
                                 onClick={() => {
                                   setSelectedInteraction(interaction);
                                   setInteractionDialogOpen(true);
                                 }}
                               >
-                                <div className="flex items-center justify-between mb-2 gap-2">
-                                  <Badge variant="outline" className="text-[#a855f7] border-[#a855f7] shrink-0">
+                                <div className="flex items-center justify-between mb-2">
+                                  <Badge variant="outline" className="text-[#a855f7] border-[#a855f7]">
                                     {interaction.purpose}
                                   </Badge>
-                                  <div className="flex items-center gap-2 shrink-0">
-                                    <span className="text-xs text-muted-foreground font-mono truncate">
+                                  <div className="flex items-center gap-2">
+                                    <span className="text-xs text-muted-foreground font-mono">
                                       {interaction.model}
                                     </span>
                                     <Eye className="h-4 w-4 text-[#a855f7]" />
                                   </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2 text-xs">
-                                  <div className="bg-[#111111] p-2 rounded overflow-hidden">
+                                  <div className="bg-[#111111] p-2 rounded">
                                     <span className="text-muted-foreground">Prompt:</span>{" "}
                                     <span className="text-[#00d4ff]">{interaction.prompt_length} chars</span>
                                   </div>
-                                  <div className="bg-[#111111] p-2 rounded overflow-hidden">
+                                  <div className="bg-[#111111] p-2 rounded">
                                     <span className="text-muted-foreground">Response:</span>{" "}
                                     <span className="text-[#22c55e]">{interaction.response_length} chars</span>
                                   </div>
                                 </div>
-                                <p className="text-xs text-muted-foreground mt-2 italic truncate">Click to view full prompt and response</p>
+                                <p className="text-xs text-muted-foreground mt-2 italic">Click to view full prompt and response</p>
                               </div>
                             ))}
                           </div>
@@ -1392,14 +1421,14 @@ export default function CompanyPage({ params }: PageProps) {
                             )}
                           </div>
                         )}
-                      </div>
+                      </ScrollArea>
                     </CardContent>
                   </Card>
                 </div>
 
                 {/* Integrity Verification */}
                 {trail && (
-                  <Card className="bg-[#111111] border-[#1f1f1f] mt-4 overflow-hidden">
+                  <Card className="bg-[#111111] border-[#1f1f1f] mt-4">
                     <CardHeader>
                       <CardTitle className="flex items-center gap-2">
                         <Hash className="h-5 w-5 text-[#22c55e]" />
@@ -1438,13 +1467,13 @@ export default function CompanyPage({ params }: PageProps) {
                   </TabsList>
 
                   <TabsContent value="coa">
-                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
+                    <Card className="bg-[#111111] border-[#1f1f1f]">
                       <CardHeader>
                         <CardTitle>Chart of Accounts</CardTitle>
                         <CardDescription>{coa?.accounts?.length || 0} accounts</CardDescription>
                       </CardHeader>
                       <CardContent>
-                        <div className="max-h-[50vh] overflow-y-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
+                        <ScrollArea className="max-h-[50vh]">
                           <Table>
                             <TableHeader>
                               <TableRow className="border-[#1f1f1f]">
@@ -1465,13 +1494,13 @@ export default function CompanyPage({ params }: PageProps) {
                               ))}
                             </TableBody>
                           </Table>
-                        </div>
+                        </ScrollArea>
                       </CardContent>
                     </Card>
                   </TabsContent>
 
                   <TabsContent value="gl">
-                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
+                    <Card className="bg-[#111111] border-[#1f1f1f]">
                       <CardHeader>
                         <CardTitle>General Ledger</CardTitle>
                         <CardDescription>{gl?.entries?.length || 0} entries | {gl?.period_start} to {gl?.period_end}</CardDescription>
@@ -1510,7 +1539,7 @@ export default function CompanyPage({ params }: PageProps) {
                   </TabsContent>
 
                   <TabsContent value="tb">
-                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
+                    <Card className="bg-[#111111] border-[#1f1f1f]">
                       <CardHeader>
                         <CardTitle>Trial Balance</CardTitle>
                         <CardDescription>
@@ -1570,7 +1599,7 @@ export default function CompanyPage({ params }: PageProps) {
                   </TabsContent>
 
                   <TabsContent value="ajes">
-                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
+                    <Card className="bg-[#111111] border-[#1f1f1f]">
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                           <FileText className="h-5 w-5 text-[#00d4ff]" />
@@ -1590,8 +1619,8 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardHeader>
                       <CardContent>
                         {ajes.length > 0 ? (
-                          <div>
-                            <div className="max-h-[60vh] overflow-y-auto space-y-4" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
+                          <ScrollArea className="max-h-[60vh]">
+                            <div className="space-y-4">
                               {ajes.map((aje: any, idx: number) => (
                                 <AJEDetailCard
                                   key={aje.aje_id || idx}
@@ -1607,13 +1636,7 @@ export default function CompanyPage({ params }: PageProps) {
                                 />
                               ))}
                             </div>
-                            {isAuditing && (
-                              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-[#1f1f1f] text-sm text-[#00d4ff]">
-                                <Loader2 className="h-4 w-4 animate-spin" />
-                                <span>Generating more AJEs... ({ajes.length} so far)</span>
-                              </div>
-                            )}
-                          </div>
+                          </ScrollArea>
                         ) : (
                           <div className="text-center py-12 text-muted-foreground">
                             <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
@@ -1632,54 +1655,6 @@ export default function CompanyPage({ params }: PageProps) {
                 </Tabs>
               </TabsContent>
             </Tabs>
-
-            {/* Live Console - inside left column so it doesn't overlap with findings */}
-            <Card className="bg-[#111111] border-[#1f1f1f] mt-4">
-              <CardHeader className="py-3">
-                <CardTitle className="flex items-center gap-2 text-sm">
-                  <TrendingUp className="h-4 w-4 text-[#00d4ff]" />
-                  Live Audit Console
-                  {isAuditing && (
-                    <Badge className="ml-2 bg-[#22c55e] animate-pulse text-xs">Running</Badge>
-                  )}
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="pt-0">
-                <div
-                  ref={reasoningRef}
-                  className="font-mono text-xs bg-[#0a0a0a] p-3 rounded border border-[#1f1f1f] h-28 overflow-y-auto overflow-x-hidden"
-                >
-                  {liveReasoningSteps.length > 0 ? (
-                    liveReasoningSteps.map((step, idx) => {
-                      const isAI = step.includes("[AI]");
-                      const isSuccess = step.includes("[OK]");
-                      const isWarning = step.includes("[!]");
-                      return (
-                        <p
-                          key={idx}
-                          className={`break-words whitespace-pre-wrap
-                            ${isAI ? "text-[#a855f7]" : ""}
-                            ${isSuccess ? "text-[#22c55e]" : ""}
-                            ${isWarning ? "text-[#fbbf24]" : ""}
-                            ${!isAI && !isSuccess && !isWarning ? "text-muted-foreground" : ""}
-                          `}
-                        >
-                          {step}
-                        </p>
-                      );
-                    })
-                  ) : (
-                    <>
-                      <p className="text-muted-foreground">{"> System ready."}</p>
-                      <p className="text-muted-foreground">{"> Click 'Run Audit' to start analysis..."}</p>
-                    </>
-                  )}
-                  {isAuditing && (
-                    <p className="text-[#00d4ff] animate-pulse">{"> Processing..."}</p>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
           </div>
 
           {/* Right Panel - Chat */}
@@ -1749,6 +1724,58 @@ export default function CompanyPage({ params }: PageProps) {
 
           </div>
         </div>
+
+        {/* Live Console */}
+        <Card className="bg-[#111111] border-[#1f1f1f] mt-6">
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <TrendingUp className="h-5 w-5 text-[#00d4ff]" />
+              Live Audit Console
+              {isAuditing && (
+                <Badge className="ml-2 bg-[#22c55e] animate-pulse">Running</Badge>
+              )}
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div
+              ref={reasoningRef}
+              className="font-mono text-sm bg-[#0a0a0a] p-4 rounded border border-[#1f1f1f] h-32 overflow-y-auto overflow-x-hidden"
+            >
+              {liveReasoningSteps.length > 0 ? (
+                liveReasoningSteps.map((step, idx) => {
+                  const isAI = step.includes("[AI]");
+                  const isSuccess = step.includes("[OK]");
+                  const isWarning = step.includes("[!]");
+                  return (
+                    <p
+                      key={idx}
+                      className={`wrap-break-word whitespace-pre-wrap
+                        ${isAI ? "text-[#a855f7]" : ""}
+                        ${isSuccess ? "text-[#22c55e]" : ""}
+                        ${isWarning ? "text-[#fbbf24]" : ""}
+                        ${!isAI && !isSuccess && !isWarning ? "text-muted-foreground" : ""}
+                      `}
+                    >
+                      {step}
+                    </p>
+                  );
+                })
+              ) : (
+                <>
+                  <p className="text-muted-foreground">{"> System ready."}</p>
+                  <p className="text-muted-foreground">{"> Click 'Run Audit' to start analysis..."}</p>
+                </>
+              )}
+              {isAuditing && (
+                <p className="text-[#00d4ff] animate-pulse">
+                  {auditStepName
+                    ? `> Step ${auditCurrentStep}/${auditTotalSteps}: ${auditStepName}... (${Math.round(auditProgress)}%)`
+                    : "> Processing..."}
+                </p>
+              )}
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
       {/* Interactive Dialogs */}
