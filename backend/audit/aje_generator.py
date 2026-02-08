@@ -24,9 +24,16 @@ class AJEGenerator:
         findings: list[dict],
         coa: ChartOfAccounts,
         audit_record: AuditRecord,
-        accounting_standard: AccountingStandard = AccountingStandard.GAAP
+        accounting_standard: AccountingStandard = AccountingStandard.GAAP,
+        on_aje_callback=None,
     ) -> list[dict]:
-        """Generate AJEs for findings that can be corrected."""
+        """Generate AJEs for findings that can be corrected.
+        
+        Args:
+            on_aje_callback: Optional callable invoked with each AJE dict as
+                             soon as it is generated, so callers can stream it
+                             to clients immediately.
+        """
         logger.info(f"[generate_ajes] Processing {len(findings)} findings for AJE generation using {accounting_standard.value.upper()}")
         
         # Store accounting standard for use in generation methods
@@ -56,12 +63,19 @@ class AJEGenerator:
             if aje:
                 ajes.append(aje)
                 logger.info(f"[generate_ajes] Generated AJE {aje['aje_id']} for finding {finding.get('finding_id')}")
+                # Stream this AJE to the client immediately
+                if on_aje_callback:
+                    on_aje_callback(aje)
         
         # If no AJEs generated due to quota, use deterministic fallback
         if len(ajes) == 0 and len(correctable) > 0:
             logger.info("[generate_ajes] Using deterministic AJE generation fallback")
             audit_record.add_reasoning_step(f"Using deterministic {accounting_standard.value.upper()} AJE rules (AI unavailable)")
             ajes = self._generate_deterministic_ajes(correctable, coa)
+            # Stream deterministic AJEs too
+            if on_aje_callback:
+                for aje in ajes:
+                    on_aje_callback(aje)
             logger.info(f"[generate_ajes] Generated {len(ajes)} deterministic AJEs")
         
         logger.info(f"[generate_ajes] Successfully generated {len(ajes)} total AJEs")

@@ -361,17 +361,17 @@ class AuditEngine:
                 "method": "Rule-based generation"
             })
             
-            # Run in thread if possible - pass accounting_standard so AJEs follow selected ruleset
-            if hasattr(self.aje_generator, 'generate_ajes_sync'):
-                 ajes = await asyncio.to_thread(self.aje_generator.generate_ajes_sync, enhanced_findings, coa, audit_record, accounting_standard)
-            else:
-                 # If only async method exists, await it directly (assuming it's light or handles its own concurrency)
-                 ajes = await self.aje_generator.generate_ajes(enhanced_findings, coa, audit_record, accounting_standard)
-
-            for aje in ajes:
+            # Stream each AJE as it is generated instead of waiting for all
+            def on_aje_generated(aje: dict):
+                """Callback invoked per AJE so the frontend sees them immediately."""
                 audit_record.add_aje(aje)
                 stream_data("aje", aje)
-                
+
+            ajes = await self.aje_generator.generate_ajes(
+                enhanced_findings, coa, audit_record, accounting_standard,
+                on_aje_callback=on_aje_generated,
+            )
+
             stream_reasoning_step(f"Generated {len(ajes)} adjusting journal entries", {"aje_count": len(ajes)})
             report_progress(f"Generated {len(ajes)} adjusting journal entries", 85.0)
             checkpoint("aje", {"findings": enhanced_findings, "ajes": ajes})

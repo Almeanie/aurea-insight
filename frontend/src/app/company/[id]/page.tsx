@@ -1590,8 +1590,8 @@ export default function CompanyPage({ params }: PageProps) {
                       </CardHeader>
                       <CardContent>
                         {ajes.length > 0 ? (
-                          <ScrollArea className="max-h-[60vh]">
-                            <div className="space-y-4">
+                          <div>
+                            <div className="max-h-[60vh] overflow-y-auto space-y-4" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
                               {ajes.map((aje: any, idx: number) => (
                                 <AJEDetailCard
                                   key={aje.aje_id || idx}
@@ -1607,7 +1607,13 @@ export default function CompanyPage({ params }: PageProps) {
                                 />
                               ))}
                             </div>
-                          </ScrollArea>
+                            {isAuditing && (
+                              <div className="flex items-center gap-2 mt-4 pt-4 border-t border-[#1f1f1f] text-sm text-[#00d4ff]">
+                                <Loader2 className="h-4 w-4 animate-spin" />
+                                <span>Generating more AJEs... ({ajes.length} so far)</span>
+                              </div>
+                            )}
+                          </div>
                         ) : (
                           <div className="text-center py-12 text-muted-foreground">
                             <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
