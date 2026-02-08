@@ -264,15 +264,6 @@ export default function CompanyPage({ params }: PageProps) {
               setAuditStatus(data.status as any);
             }
 
-            // Show live step progress in console for info/success/ai types
-            if (data.type === 'info' || data.type === 'success' || data.type === 'ai') {
-              if (data.message && !data.data?.data_type) {
-                const stepType = data.type === 'ai' ? 'ai' :
-                  data.type === 'success' ? 'success' : 'info';
-                addReasoningStep(data.message, stepType);
-              }
-            }
-
             // Check for quota exceeded
             if (data.type === 'quota_exceeded' || data.status === 'quota_exceeded') {
               setAuditStatus("quota_exceeded");
@@ -335,6 +326,7 @@ export default function CompanyPage({ params }: PageProps) {
                 `  Response: ${responsePreview}${responsePreview.length >= 150 ? '...' : ''}`
               ]);
             } else if (data.message) {
+              // Show progress messages in console (info, success, ai, warning, error)
               const stepType = data.type === 'ai' ? 'ai' :
                 data.type === 'success' || data.type === 'completed' ? 'success' :
                   data.type === 'error' || data.type === 'warning' ? 'warning' : 'info';
@@ -1596,7 +1588,7 @@ export default function CompanyPage({ params }: PageProps) {
                   </TabsContent>
 
                   <TabsContent value="ajes">
-                    <Card className="bg-[#111111] border-[#1f1f1f]">
+                    <Card className="bg-[#111111] border-[#1f1f1f] overflow-hidden">
                       <CardHeader>
                         <CardTitle className="flex items-center gap-2">
                           <FileText className="h-5 w-5 text-[#00d4ff]" />
