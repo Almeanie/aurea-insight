@@ -1032,17 +1032,16 @@ export default function CompanyPage({ params }: PageProps) {
                   </CardHeader>
                   <CardContent>
                     {findings.length > 0 ? (
-                      <div className="max-h-[60vh] overflow-auto" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
-                        <Table>
+                      <div className="max-h-[60vh] overflow-y-auto overflow-x-hidden" style={{ scrollbarWidth: "thin", scrollbarColor: "#333 transparent" }}>
+                        <Table className="w-full table-fixed">
                           <TableHeader>
                             <TableRow className="border-[#1f1f1f] hover:bg-transparent">
-                              <TableHead className="text-muted-foreground whitespace-nowrap">Severity</TableHead>
-                              <TableHead className="text-muted-foreground whitespace-nowrap">Category</TableHead>
+                              <TableHead className="text-muted-foreground w-[72px]">Severity</TableHead>
+                              <TableHead className="text-muted-foreground w-[90px]">Category</TableHead>
                               <TableHead className="text-muted-foreground">Issue</TableHead>
-                              <TableHead className="text-muted-foreground text-right whitespace-nowrap">Txns</TableHead>
-                              <TableHead className="text-muted-foreground text-right whitespace-nowrap">Amount</TableHead>
-                              <TableHead className="text-muted-foreground whitespace-nowrap">Conf.</TableHead>
-                              <TableHead className="text-muted-foreground whitespace-nowrap w-20">Action</TableHead>
+                              <TableHead className="text-muted-foreground text-right w-[80px]">Transactions</TableHead>
+                              <TableHead className="text-muted-foreground w-[56px]">Conf.</TableHead>
+                              <TableHead className="text-muted-foreground w-[52px]">Action</TableHead>
                             </TableRow>
                           </TableHeader>
                           <TableBody>
@@ -1064,8 +1063,8 @@ export default function CompanyPage({ params }: PageProps) {
                                     setFindingDialogOpen(true);
                                   }}
                                 >
-                                  <TableCell>
-                                    <Badge className={`
+                                  <TableCell className="overflow-hidden px-2">
+                                    <Badge className={`text-[10px] px-1.5 py-0
                                     ${finding.severity === "critical" ? "bg-[#ff3366] hover:bg-[#ff3366]" : ""}
                                     ${finding.severity === "high" ? "bg-[#ff6b35] hover:bg-[#ff6b35]" : ""}
                                     ${finding.severity === "medium" ? "bg-[#fbbf24] text-black hover:bg-[#fbbf24]" : ""}
@@ -1074,61 +1073,51 @@ export default function CompanyPage({ params }: PageProps) {
                                       {finding.severity?.toUpperCase()}
                                     </Badge>
                                   </TableCell>
-                                  <TableCell className="text-muted-foreground capitalize">{finding.category}</TableCell>
-                                  <TableCell className="max-w-[220px]">
-                                    <div className="font-medium truncate">{finding.issue}</div>
-                                    <div className="text-xs text-muted-foreground mt-1 line-clamp-1 overflow-hidden">{finding.details?.substring(0, 60)}...</div>
+                                  <TableCell className="text-muted-foreground capitalize text-xs truncate overflow-hidden px-2">{finding.category}</TableCell>
+                                  <TableCell className="overflow-hidden px-2">
+                                    <div className="font-medium truncate text-sm">{finding.issue}</div>
+                                    <div className="text-xs text-muted-foreground mt-0.5 truncate">{finding.details?.substring(0, 50)}...</div>
                                     {(finding.ifrs_standard || finding.gaap_principle) && (
-                                      <div className="text-xs text-[#a855f7] mt-1 flex items-center gap-1 overflow-hidden">
+                                      <div className="text-[10px] text-[#a855f7] mt-0.5 flex items-center gap-1 overflow-hidden">
                                         <Shield className="h-3 w-3 shrink-0" />
                                         <span className="truncate">{finding.ifrs_standard || finding.gaap_principle}</span>
                                       </div>
                                     )}
                                     {finding.detection_method && (
-                                      <div className="text-xs text-[#00d4ff] mt-1 flex items-center gap-1 overflow-hidden">
+                                      <div className="text-[10px] text-[#00d4ff] mt-0.5 flex items-center gap-1 overflow-hidden">
                                         <Code className="h-3 w-3 shrink-0" />
-                                        <span className="truncate">{finding.detection_method.substring(0, 50)}...</span>
+                                        <span className="truncate">{finding.detection_method.substring(0, 40)}...</span>
                                       </div>
                                     )}
                                   </TableCell>
-                                  <TableCell className="text-right financial-number text-muted-foreground">
+                                  <TableCell className="text-right financial-number text-muted-foreground text-xs px-2">
                                     {(() => {
                                       const txnCount = finding.affected_transactions?.length || finding.transaction_details?.length || 0;
                                       return txnCount > 0 ? txnCount : "-";
                                     })()}
                                   </TableCell>
-                                  <TableCell className="text-right financial-number">
-                                    {(() => {
-                                      const txDetails = finding.transaction_details;
-                                      if (!txDetails || txDetails.length === 0) return <span className="text-muted-foreground">-</span>;
-                                      const total = txDetails.reduce((sum: number, tx: any) => sum + (tx.debit || 0) + (tx.credit || 0), 0) / 2;
-                                      return <span className="text-[#ff6b35]">${total.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 0 })}</span>;
-                                    })()}
-                                  </TableCell>
-                                  <TableCell className="financial-number">
+                                  <TableCell className="financial-number text-xs px-2">
                                     <div>{Math.round((finding.confidence || 0) * 100)}%</div>
                                     {finding.ai_explanation && !finding.ai_explanation.includes("skipped") ? (
-                                      <div className="flex items-center gap-1 mt-1" title="AI explanation available">
-                                        <Brain className="h-3 w-3 text-[#a855f7]" />
-                                        <span className="text-[10px] text-[#a855f7]">AI Ready</span>
+                                      <div className="flex items-center gap-0.5 mt-0.5" title="AI explanation available">
+                                        <Brain className="h-3 w-3 text-[#a855f7] shrink-0" />
+                                        <span className="text-[9px] text-[#a855f7]">AI</span>
                                       </div>
                                     ) : isAuditing ? (
-                                      <div className="flex items-center gap-1 mt-1" title="Generating AI explanation...">
-                                        <Loader2 className="h-3 w-3 text-[#00d4ff] animate-spin" />
-                                        <span className="text-[10px] text-[#00d4ff]">Loading</span>
+                                      <div className="flex items-center gap-0.5 mt-0.5" title="Generating AI explanation...">
+                                        <Loader2 className="h-3 w-3 text-[#00d4ff] animate-spin shrink-0" />
                                       </div>
                                     ) : (
-                                      <div className="flex items-center gap-1 mt-1" title="AI explanation not available">
-                                        <Lock className="h-3 w-3 text-muted-foreground" />
-                                        <span className="text-[10px] text-muted-foreground">Pending</span>
+                                      <div className="flex items-center gap-0.5 mt-0.5" title="AI explanation not available">
+                                        <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
                                       </div>
                                     )}
                                   </TableCell>
-                                  <TableCell>
+                                  <TableCell className="px-2">
                                     <Button
                                       variant="ghost"
-                                      size="sm"
-                                      className={`${isClickable
+                                      size="icon"
+                                      className={`h-7 w-7 ${isClickable
                                         ? 'text-[#00d4ff] hover:text-[#00d4ff] hover:bg-[#00d4ff]/10'
                                         : 'text-muted-foreground cursor-not-allowed'
                                         }`}
@@ -1141,15 +1130,9 @@ export default function CompanyPage({ params }: PageProps) {
                                       }}
                                     >
                                       {isProcessing ? (
-                                        <>
-                                          <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-                                          Processing
-                                        </>
+                                        <Loader2 className="h-4 w-4 animate-spin" />
                                       ) : (
-                                        <>
-                                          <Eye className="h-4 w-4 mr-1" />
-                                          View
-                                        </>
+                                        <Eye className="h-4 w-4" />
                                       )}
                                     </Button>
                                   </TableCell>
