@@ -13,6 +13,17 @@ from core.schemas import ExportRequest
 router = APIRouter()
 
 
+def _build_export_error(code: str, message: str, exc: Exception, hint: Optional[str] = None) -> dict:
+    """Build a structured export error payload with true exception details."""
+    return {
+        "code": code,
+        "message": message,
+        "exception_type": type(exc).__name__,
+        "exception_message": str(exc),
+        "hint": hint,
+    }
+
+
 @router.get("/{company_id}/pdf")
 async def export_pdf(
     company_id: str,
@@ -59,12 +70,25 @@ async def export_pdf(
         )
     except Exception as e:
         logger.exception(f"PDF export failed for company_id={company_id}, audit_id={audit_id}: {e}")
+        err_msg = str(e).lower()
+        is_dependency_issue = any(token in err_msg for token in [
+            "libgobject",
+            "libpango",
+            "libgdk-pixbuf",
+            "weasyprint"
+        ])
         raise HTTPException(
             status_code=500,
-            detail=(
-                "Failed to generate PDF report. "
-                "If this is a deployed environment, ensure WeasyPrint system dependencies "
-                "(libglib2.0-0, libpango-1.0-0, libgdk-pixbuf-2.0-0) are installed."
+            detail=_build_export_error(
+                code="pdf_dependency_error" if is_dependency_issue else "pdf_generation_error",
+                message="Failed to generate PDF report.",
+                exc=e,
+                hint=(
+                    "Install WeasyPrint system dependencies in the runtime image "
+                    "(libglib2.0-0, libpango-1.0-0, libgdk-pixbuf-2.0-0)."
+                    if is_dependency_issue else
+                    "Check export logs for the failing data field/template expression."
+                )
             )
         )
     
@@ -101,7 +125,19 @@ async def export_findings_csv(company_id: str, audit_id: Optional[str] = None):
         raise HTTPException(status_code=404, detail="No audit found for this company")
     
     # Generate CSV
-    csv_content = generate_findings_csv(result["findings"])
+    try:
+        csv_content = generate_findings_csv(result["findings"])
+    except Exception as e:
+        logger.exception(f"CSV findings export failed for company_id={company_id}, audit_id={audit_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=_build_export_error(
+                code="csv_findings_generation_error",
+                message="Failed to generate findings CSV export.",
+                exc=e,
+                hint="Check findings payload shape and serialization compatibility.",
+            )
+        )
     
     return StreamingResponse(
         io.BytesIO(csv_content.encode()),
@@ -135,7 +171,19 @@ async def export_ajes_csv(company_id: str, audit_id: Optional[str] = None):
         raise HTTPException(status_code=404, detail="No audit found for this company")
     
     # Generate CSV
-    csv_content = generate_ajes_csv(result["ajes"])
+    try:
+        csv_content = generate_ajes_csv(result["ajes"])
+    except Exception as e:
+        logger.exception(f"CSV AJEs export failed for company_id={company_id}, audit_id={audit_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=_build_export_error(
+                code="csv_ajes_generation_error",
+                message="Failed to generate AJEs CSV export.",
+                exc=e,
+                hint="Check AJE entry schema and serialization compatibility.",
+            )
+        )
     
     return StreamingResponse(
         io.BytesIO(csv_content.encode()),
@@ -170,7 +218,19 @@ async def export_ajes_xlsx(company_id: str, audit_id: Optional[str] = None):
     # Generate Excel
     from exports.excel_export import generate_ajes_xlsx
     ajes = result.get("ajes", [])
-    output = generate_ajes_xlsx(ajes)
+    try:
+        output = generate_ajes_xlsx(ajes)
+    except Exception as e:
+        logger.exception(f"XLSX AJEs export failed for company_id={company_id}, audit_id={audit_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=_build_export_error(
+                code="xlsx_ajes_generation_error",
+                message="Failed to generate AJEs Excel export.",
+                exc=e,
+                hint="Check AJE payload types and openpyxl runtime availability.",
+            )
+        )
         
     output.seek(0)
     

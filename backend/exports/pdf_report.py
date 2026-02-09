@@ -7,6 +7,7 @@ from weasyprint import HTML
 from io import BytesIO
 import base64
 import os
+from pydantic import BaseModel
 
 async def generate_pdf_report(
     company_data: dict,
@@ -20,9 +21,18 @@ async def generate_pdf_report(
     """
     
     metadata = company_data.get("metadata", {})
+    if isinstance(metadata, BaseModel):
+        metadata = metadata.model_dump()
+        
     findings = audit_data.get("findings", [])
+    findings = [f.model_dump() if isinstance(f, BaseModel) else f for f in findings]
+    
     ajes = audit_data.get("ajes", [])
+    ajes = [a.model_dump() if isinstance(a, BaseModel) else a for a in ajes]
+    
     risk_score = audit_data.get("risk_score", {})
+    if isinstance(risk_score, BaseModel):
+        risk_score = risk_score.model_dump()
     
     # Load banner image and encode as base64
     banner_base64 = ""
