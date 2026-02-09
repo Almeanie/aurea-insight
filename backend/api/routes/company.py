@@ -5,6 +5,8 @@ Handles company generation, upload, and retrieval.
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form
 from typing import Optional
 import uuid
+import pandas as pd
+import io
 from loguru import logger
 
 from core.schemas import (
@@ -484,6 +486,22 @@ async def upload_company_smart(
     from core.audit_trail import audit_trail
     import json
     
+    async def extract_text_from_file(file: UploadFile) -> str:
+        content = await file.read()
+        filename = file.filename.lower()
+        
+        if filename.endswith(('.xlsx', '.xls')):
+            try:
+                # Use pandas to read Excel and convert to CSV string for the LLM
+                df = pd.read_excel(io.BytesIO(content))
+                return df.to_csv(index=False)
+            except Exception as e:
+                logger.error(f"Error parsing Excel file {filename}: {e}")
+                return "Error: Could not parse Excel file."
+        else:
+            # Assume text-based (CSV, JSON, TXT)
+            return content.decode('utf-8', errors='ignore')
+
     logger.info(f"[upload_company_smart] Smart upload for: {company_name}")
     
     company_id = str(uuid.uuid4())
@@ -497,27 +515,41 @@ async def upload_company_smart(
     try:
         gemini = GeminiClient()
         
-        # Read GL file
-        gl_content = await gl_file.read()
-        gl_text = gl_content.decode('utf-8', errors='ignore')[:10000]  # Limit for prompt
+        # Read files correctly (handling binary Excel vs raw text)
+        gl_text_full = await extract_text_from_file(gl_file)
+        gl_text = gl_text_full[:10000]
         
-        audit_record.add_reasoning_step("Starting smart file upload", {
-            "file_name": gl_file.filename,
-            "file_size": len(gl_content),
-            "content_preview": gl_text[:500]
+        tb_text = ""
+        if tb_file:
+            tb_text_full = await extract_text_from_file(tb_file)
+            tb_text = tb_text_full[:5000]
+        
+        audit_record.add_reasoning_step("Starting smart multi-file upload", {
+            "gl_file": gl_file.filename,
+            "gl_size": len(gl_text_full),
+            "tb_file": tb_file.filename if tb_file else None,
+            "tb_size": len(tb_text_full) if tb_file else 0
         })
+        
+        # Build prompt with both files if available
+        tb_context = f"\nFile 2: Trial Balance ({tb_file.filename})\nContent preview:\n{tb_text}" if tb_file else ""
         
         # Use AI to understand and normalize the data
         result = await gemini.generate_json(
-            prompt=f"""Analyze this financial data and extract structured General Ledger entries.
-
-File name: {gl_file.filename}
+            prompt=f"""Analyze the provided financial data to extract structured General Ledger entries.
+{f"File 1: General Ledger ({gl_file.filename})"}
 Content preview:
 {gl_text}
+{tb_context}
 
-Extract and return a JSON object with:
+Task:
+1. Detect company name, industry, and accounting basis.
+2. Extract all transaction entries from the General Ledger.
+3. Use the Trial Balance (if provided) to validate account codes and names. A Trial Balance usually shows period-end balances which should match the cumulative effect of GL entries.
+
+Return a JSON object with:
 {{
-    "company_name": "detected company name or use '{company_name}'",
+    "company_name": "detected name or '{company_name}'",
     "industry": "one of: saas, retail, manufacturing, healthcare, services",
     "accounting_basis": "accrual or cash",
     "entries": [
@@ -532,7 +564,7 @@ Extract and return a JSON object with:
             "vendor_or_customer": "name if any"
         }}
     ],
-    "detected_issues": ["list of any data quality issues noticed"]
+    "detected_issues": ["any data quality issues noticed"]
 }}
 
 If you cannot parse the data, return {{"error": "description of the problem"}}
@@ -559,14 +591,14 @@ If you cannot parse the data, return {{"error": "description of the problem"}}
         
         # Create GL from parsed data
         from datetime import datetime
-        from core.schemas import GLEntry, GeneralLedger
+        from core.schemas import JournalEntry, GeneralLedger
         
         gl_entries = []
         for entry in parsed.get("entries", []):
             try:
-                gl_entries.append(GLEntry(
+                gl_entries.append(JournalEntry(
                     entry_id=entry.get("entry_id", f"UP-{uuid.uuid4().hex[:6]}"),
-                    date=datetime.strptime(entry.get("date", "2024-01-01"), "%Y-%m-%d").date(),
+                    date=entry.get("date", "2024-01-01"),
                     account_code=str(entry.get("account_code", "0000")),
                     account_name=entry.get("account_name", "Unknown"),
                     description=entry.get("description", ""),
@@ -613,8 +645,8 @@ If you cannot parse the data, return {{"error": "description of the problem"}}
         # Create GL
         gl = GeneralLedger(
             company_id=company_id,
-            period_start=min(e.date for e in gl_entries) if gl_entries else datetime.now().date(),
-            period_end=max(e.date for e in gl_entries) if gl_entries else datetime.now().date(),
+            period_start=min(e.date for e in gl_entries) if gl_entries else datetime.now().strftime("%Y-%m-%d"),
+            period_end=max(e.date for e in gl_entries) if gl_entries else datetime.now().strftime("%Y-%m-%d"),
             entries=gl_entries
         )
         

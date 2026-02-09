@@ -114,18 +114,7 @@ class ProgressTracker:
         
         logger.debug(f"[ProgressTracker] Completed operation: {operation_id}")
     
-    def fail_operation(self, operation_id: str, error: str):
-        """Mark operation as failed."""
-        self._completed[operation_id] = True
-        self.add_step(operation_id, "error", f"Operation failed: {error}")
-        
-        # Signal end to all subscribers
-        for queue in self._subscribers.get(operation_id, []):
-            try:
-                queue.put_nowait({"type": "end", "message": "Stream ended"})
-            except asyncio.QueueFull:
-                pass
-    
+
     def subscribe(self, operation_id: str) -> asyncio.Queue:
         """Subscribe to progress updates for an operation."""
         if operation_id not in self._subscribers:

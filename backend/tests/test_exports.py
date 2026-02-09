@@ -11,14 +11,14 @@ def test_export_pdf_endpoint():
     # Since we can't easily guarantee data in a fresh test run without seeding, 
     # we'll mock the internal call or just checks if the module structure is valid.
     # For now, let's just check if we can import the module without error, 
-    # proving xhtml2pdf is installed and importable.
+    # proving WeasyPrint is installed and importable.
     from exports.pdf_report import generate_pdf_report
     assert generate_pdf_report is not None
 
-def test_xhtml2pdf_installation():
-    from xhtml2pdf import pisa
+def test_weasyprint_installation():
+    from weasyprint import HTML
     buffer = io.BytesIO()
-    pisa.CreatePDF(src="<html><body>Test</body></html>", dest=buffer)
+    HTML(string="<html><body>Test</body></html>").write_pdf(buffer)
     assert buffer.getvalue().startswith(b"%PDF")
 
 def test_pandas_excel_creation():

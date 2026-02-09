@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     LOG_LEVEL: str = "INFO"
     HOST: str = "0.0.0.0"
-    PORT: int = 8000
+    PORT: int = 8888
     
     # API
     API_PREFIX: str = "/api"

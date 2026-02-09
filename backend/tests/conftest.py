@@ -231,3 +231,22 @@ def sample_findings_list():
             "recommendation": "Verify authorization"
         }
     ]
+
+
+@pytest.fixture
+def sample_finding():
+    """Create a single sample finding for audit trail tests."""
+    return {
+        "finding_id": "FND-001",
+        "category": "fraud",
+        "severity": "critical",
+        "issue": "Potential Structuring",
+        "details": "Multiple transactions just under threshold",
+        "recommendation": "Investigate further"
+    }
+
+
+@pytest.fixture
+def sample_journal_entries(sample_gl):
+    """Return a list of journal entries from sample GL."""
+    return sample_gl.entries

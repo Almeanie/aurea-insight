@@ -2,7 +2,7 @@
  * API Client for Aurea Insight
  */
 
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+export const API_BASE_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8888";
 
 interface ApiResponse<T> {
   data: T | null;

@@ -76,7 +76,11 @@ async def _run_audit_task(
         
         # Checkpoint callback
         def save_checkpoint(phase: str, data: dict):
-            progress_tracker.save_checkpoint(audit_id, {"phase": phase, "data": data})
+            progress_tracker.save_checkpoint(audit_id, {
+                "phase": phase, 
+                "data": data,
+                "accounting_standard": accounting_standard.value
+            })
         
         # Quota exceeded callback
         def on_quota_exceeded():
@@ -269,7 +273,7 @@ async def get_findings(company_id: str, audit_id: Optional[str] = None):
     else:
         # Find most recent audit for company
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -316,7 +320,7 @@ async def get_ajes(company_id: str, audit_id: Optional[str] = None):
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -348,7 +352,7 @@ async def get_risk_score(company_id: str, audit_id: Optional[str] = None):
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -379,7 +383,7 @@ async def get_audit_trail(company_id: str, audit_id: Optional[str] = None):
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -415,7 +419,7 @@ async def get_finding_reasoning(company_id: str, finding_id: str, audit_id: Opti
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -497,7 +501,7 @@ async def get_reasoning_chain(company_id: str, audit_id: Optional[str] = None):
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -590,8 +594,26 @@ async def resume_audit(company_id: str, audit_id: str):
     progress_tracker.reset_cancellation(audit_id)
     progress_tracker.add_step(audit_id, "info", "Resuming audit from checkpoint...")
     
+    # Get saved accounting standard
+    saved_std = None
+    if progress_tracker.has_checkpoint(audit_id):
+        checkpoint = progress_tracker.get_checkpoint(audit_id)
+        if checkpoint:
+            saved_std = checkpoint.get("accounting_standard")
+            
+    # Fallback to audit_results (for completed audits)
+    if not saved_std:
+        saved_std = audit_results.get(audit_id, {}).get("accounting_standard")
+        
+    accounting_standard = AccountingStandard.GAAP
+    if saved_std:
+        try:
+            accounting_standard = AccountingStandard(saved_std)
+        except (ValueError, TypeError):
+            accounting_standard = AccountingStandard.GAAP
+    
     # Schedule the resumed audit to run in background
-    asyncio.create_task(_run_audit_task(company_id, company_data, audit_id, resume=True))
+    asyncio.create_task(_run_audit_task(company_id, company_data, audit_id, resume=True, accounting_standard=accounting_standard))
     
     return {
         "audit_id": audit_id,

@@ -82,9 +82,8 @@ export default function AuditorChat({ companyId, auditId }: AuditorChatProps) {
     <Sheet>
       <SheetTrigger asChild>
         <Button
-          variant="outline"
           size="icon"
-          className="fixed bottom-6 right-6 h-14 w-14 rounded-full bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90 shadow-lg shadow-[#00d4ff]/20"
+          className="fixed bottom-6 right-6 h-14 w-14 rounded-full bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90 shadow-2xl shadow-[#00d4ff]/40 z-100 transition-all hover:scale-110 animate-in fade-in slide-in-from-bottom-4 duration-700"
         >
           <MessageSquare className="h-6 w-6" />
         </Button>
@@ -111,11 +110,10 @@ export default function AuditorChat({ companyId, auditId }: AuditorChatProps) {
                   className={`flex ${message.role === "user" ? "justify-end" : "justify-start"}`}
                 >
                   <div
-                    className={`max-w-[80%] p-3 rounded-lg text-sm ${
-                      message.role === "user"
-                        ? "bg-[#00d4ff] text-black"
-                        : "bg-[#1a1a1a] text-foreground"
-                    }`}
+                    className={`max-w-[80%] p-3 rounded-lg text-sm ${message.role === "user"
+                      ? "bg-[#00d4ff] text-black"
+                      : "bg-[#1a1a1a] text-foreground"
+                      }`}
                   >
                     <p className="whitespace-pre-wrap">{message.content}</p>
                     {message.citations && message.citations.length > 0 && (

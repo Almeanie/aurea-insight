@@ -122,7 +122,7 @@ export default function CompanyPage({ params }: PageProps) {
   const [auditTotalSteps, setAuditTotalSteps] = useState(8);
   const [auditStepName, setAuditStepName] = useState("");
   const [auditStatus, setAuditStatus] = useState<"idle" | "running" | "paused" | "quota_exceeded" | "completed" | "error">("idle");
-  
+
   // Accounting standard selection (GAAP or IFRS)
   const [accountingStandard, setAccountingStandard] = useState<"gaap" | "ifrs">("gaap");
   const [auditAccountingStandard, setAuditAccountingStandard] = useState<string | null>(null);
@@ -781,7 +781,7 @@ export default function CompanyPage({ params }: PageProps) {
               Back
             </Link>
             <span className="text-[#1f1f1f]">|</span>
-            <Shield className="h-5 w-5 text-[#00d4ff]" />
+            <img src="/aurea_insight_logo.webp" alt="Aurea Insight Logo" className="h-6 w-auto" />
             <span className="font-semibold">{company?.name || "Company"}</span>
             {currentAuditId && (
               <Badge variant="outline" className="ml-2 text-xs">
@@ -817,8 +817,8 @@ export default function CompanyPage({ params }: PageProps) {
               <SelectTrigger className="w-[130px] bg-[#111111] border-[#1f1f1f] text-sm text-white">
                 <SelectValue placeholder="Standard" />
               </SelectTrigger>
-              <SelectContent 
-                className="bg-[#111111] border-[#1f1f1f] text-white z-[100] min-w-[130px]"
+              <SelectContent
+                className="bg-[#111111] border-[#1f1f1f] text-white z-100 min-w-[130px]"
                 position="popper"
                 sideOffset={4}
               >
@@ -1061,8 +1061,8 @@ export default function CompanyPage({ params }: PageProps) {
                               <TableHead className="text-muted-foreground w-[80px]">Severity</TableHead>
                               <TableHead className="text-muted-foreground w-[100px]">Category</TableHead>
                               <TableHead className="text-muted-foreground">Issue</TableHead>
-                              <TableHead className="text-muted-foreground text-right w-[60px]">Transactions</TableHead>
-                              <TableHead className="text-muted-foreground w-[80px]">Confidence</TableHead>
+                              <TableHead className="text-muted-foreground text-right w-[100px]">Transactions</TableHead>
+                              <TableHead className="text-muted-foreground w-[120px]">Confidence</TableHead>
                               <TableHead className="text-muted-foreground w-[70px]">Action</TableHead>
                             </TableRow>
                           </TableHeader>
@@ -1239,7 +1239,7 @@ export default function CompanyPage({ params }: PageProps) {
                               source: e.source,
                               target: e.target,
                               relationship: e.relationship,
-                              ownership_percentage: e.percentage
+                              percentage: e.percentage
                             }))}
                             width={800}
                             height={500}
@@ -1828,7 +1828,7 @@ export default function CompanyPage({ params }: PageProps) {
                 source: e.source,
                 target: e.target,
                 relationship: e.relationship,
-                ownership_percentage: e.percentage
+                percentage: e.percentage
               }))}
               width={1200}
               height={800}

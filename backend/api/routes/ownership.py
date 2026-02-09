@@ -230,7 +230,7 @@ async def analyze_vendors(company_id: str):
     graph_id = f"vendor_graph_{company_id}"
     
     # Get company name for the root node
-    company_info = company_data.get("company")
+    company_info = company_data.get("metadata")
     company_name = company_info.name if company_info else company_id
     
     # Start progress tracking immediately
@@ -335,8 +335,24 @@ async def resume_ownership_discovery(graph_id: str):
     progress_tracker.reset_cancellation(graph_id)
     progress_tracker.add_step(graph_id, "info", "Resuming discovery from checkpoint...")
     
+    # Get company name defensively from the company data store
+    from api.routes.company import companies
+    company_data = companies.get(company_id)
+    company_name = company_id # Default fallback
+    
+    if company_data:
+        # Try metadata object first (most common)
+        metadata = company_data.get("metadata")
+        if metadata and hasattr(metadata, 'name'):
+            company_name = metadata.name
+        # Fallback to 'company' key (used in some parts of the system)
+        else:
+            company_info = company_data.get("company")
+            if company_info and hasattr(company_info, 'name'):
+                company_name = company_info.name
+    
     # Schedule the resumed discovery to run in background
-    asyncio.create_task(_run_ownership_discovery_task(company_id, vendors, graph_id))
+    asyncio.create_task(_run_ownership_discovery_task(company_id, company_name, vendors, graph_id))
     
     return {
         "graph_id": graph_id,

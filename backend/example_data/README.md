@@ -54,7 +54,7 @@ company_data = get_example_company()
 
 Or via API:
 ```bash
-curl -X POST http://localhost:8000/api/companies/example
+curl -X POST http://localhost:8888/api/companies/example
 ```
 
 ## Expected Audit Results

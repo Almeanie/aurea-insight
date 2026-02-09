@@ -27,6 +27,7 @@ async def export_pdf(
     from api.routes.company import companies
     from api.routes.audit import audit_results
     from exports.pdf_report import generate_pdf_report
+    from exports.excel_export import generate_ajes_xlsx
     
     if company_id not in companies:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -38,7 +39,7 @@ async def export_pdf(
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -79,7 +80,7 @@ async def export_findings_csv(company_id: str, audit_id: Optional[str] = None):
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -113,7 +114,7 @@ async def export_ajes_csv(company_id: str, audit_id: Optional[str] = None):
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -147,7 +148,7 @@ async def export_ajes_xlsx(company_id: str, audit_id: Optional[str] = None):
         result = audit_results[audit_id]
     else:
         result = None
-        for aid, data in audit_results.items():
+        for aid, data in reversed(list(audit_results.items())):
             if data["company_id"] == company_id:
                 result = data
                 audit_id = aid
@@ -156,38 +157,10 @@ async def export_ajes_xlsx(company_id: str, audit_id: Optional[str] = None):
     if not result:
         raise HTTPException(status_code=404, detail="No audit found for this company")
     
-    # Create DataFrame
-    ajes = result.get("ajes", [])
-    if not ajes:
-        # Return empty excel
-        df = pd.DataFrame(columns=["AJE ID", "Description", "Debit Account", "Credit Account", "Amount", "Justification"])
-    else:
-        rows = []
-        for idx, aje in enumerate(ajes, 1):
-            # Flattem entries for simpler excel view
-            entries = aje.get("entries", [])
-            debits = [e for e in entries if e.get("debit", 0) > 0]
-            credits = [e for e in entries if e.get("credit", 0) > 0]
-            
-            # Simple 1-line representation if possible, otherwise could multiply
-            debit_acc = ", ".join([d.get("account_code", "") for d in debits])
-            credit_acc = ", ".join([c.get("account_code", "") for c in credits])
-            amount = ajes[0].get("total_debits", 0) # simplified
-            
-            rows.append({
-                "AJE ID": f"AJE #{idx}",
-                "Description": aje.get("description"),
-                "Debit Account": debit_acc,
-                "Credit Account": credit_acc,
-                "Amount": aje.get("total_debits", 0),
-                "Justification": aje.get("justification")
-            })
-        df = pd.DataFrame(rows)
-        
     # Generate Excel
-    output = io.BytesIO()
-    with pd.ExcelWriter(output, engine='openpyxl') as writer:
-        df.to_excel(writer, index=False, sheet_name='AJEs')
+    from exports.excel_export import generate_ajes_xlsx
+    ajes = result.get("ajes", [])
+    output = generate_ajes_xlsx(ajes)
         
     output.seek(0)
     

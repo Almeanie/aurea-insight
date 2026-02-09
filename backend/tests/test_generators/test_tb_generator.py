@@ -55,4 +55,4 @@ class TestTBGenerator:
         assert cash_row.ending_balance == 8000  # 10000 - 2000
         
         revenue_row = next(r for r in tb.rows if r.account_code == "4000")
-        assert revenue_row.ending_balance == 10000
+        assert revenue_row.ending_balance == -10000

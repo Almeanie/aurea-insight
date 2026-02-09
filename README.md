@@ -282,7 +282,7 @@ Vendor List (from GL)
 | Data Processing | Pandas, OpenPyXL |
 | Graph Analysis | NetworkX |
 | HTTP Client | httpx (for registry API calls) |
-| PDF Export | xhtml2pdf |
+| PDF Export | WeasyPrint |
 | Logging | Loguru |
 | Validation | Pydantic 2 |
 | Database | PostgreSQL + SQLAlchemy 2 (optional -- runs in-memory for demos) |
@@ -453,8 +453,8 @@ aurea-insight/
 | `DEBUG` | `true` | Enable debug mode |
 | `LOG_LEVEL` | `INFO` | Logging level |
 | `HOST` | `0.0.0.0` | Backend host |
-| `PORT` | `8000` | Backend port |
-| `NEXT_PUBLIC_API_URL` | `http://localhost:8000` | Backend URL (set at frontend build time) |
+| `PORT` | `8888` | Backend port |
+| `NEXT_PUBLIC_API_URL` | `http://localhost:8888` | Backend URL (set at frontend build time) |
 | `UK_COMPANIES_HOUSE_API_KEY` | -- | UK Companies House API key (enhances ownership discovery) |
 | `OPENCORPORATES_API_KEY` | -- | OpenCorporates API key (enhances ownership discovery) |
 
@@ -511,6 +511,12 @@ MIT License -- Hackathon Demonstration Project
 ## Team
 
 Built for the Gemini 3 Hackathon 2026
+
+Almin Hodžić
+https://www.linkedin.com/in/almin-hodzic/
+
+Siniša Milošević
+https://www.linkedin.com/in/sinisa-milosevic-b94ab182/
 
 ---
 

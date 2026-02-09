@@ -1,20 +1,20 @@
 import io
 import sys
 
-def verify_xhtml2pdf():
+def verify_weasyprint():
     try:
-        from xhtml2pdf import pisa
+        from weasyprint import HTML
         buffer = io.BytesIO()
-        pisa.CreatePDF(src="<html><body>Test</body></html>", dest=buffer)
+        HTML(string="<html><body>Test</body></html>").write_pdf(buffer)
         pdf_content = buffer.getvalue()
         if pdf_content.startswith(b"%PDF"):
-            print("SUCCESS: xhtml2pdf is working and generating PDF.")
+            print("SUCCESS: WeasyPrint is working and generating PDF.")
         else:
-            print(f"FAILURE: xhtml2pdf generated invalid data: {pdf_content[:20]}")
+            print(f"FAILURE: WeasyPrint generated invalid data: {pdf_content[:20]}")
     except ImportError:
-        print("FAILURE: xhtml2pdf not installed.")
+        print("FAILURE: WeasyPrint not installed.")
     except Exception as e:
-        print(f"FAILURE: xhtml2pdf error: {e}")
+        print(f"FAILURE: WeasyPrint error: {e}")
 
 def verify_pandas_excel():
     try:
@@ -36,5 +36,5 @@ def verify_pandas_excel():
         print(f"FAILURE: pandas error: {e}")
 
 if __name__ == "__main__":
-    verify_xhtml2pdf()
+    verify_weasyprint()
     verify_pandas_excel()
