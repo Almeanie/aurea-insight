@@ -2,12 +2,20 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
-# Install system dependencies (including cairo for xhtml2pdf/pycairo)
+# Install system dependencies required by WeasyPrint and data tooling
 RUN apt-get update && apt-get install -y \
     gcc \
     libpq-dev \
     pkg-config \
+    libglib2.0-0 \
+    libcairo2 \
     libcairo2-dev \
+    libpango-1.0-0 \
+    libpangoft2-1.0-0 \
+    libgdk-pixbuf-2.0-0 \
+    libffi-dev \
+    shared-mime-info \
+    fonts-dejavu-core \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first for better caching

@@ -3,7 +3,7 @@ PDF Report Generator
 Generates audit reports in PDF format using WeasyPrint and Tailwind CSS.
 """
 from datetime import datetime
-from weasyprint import HTML, CSS
+from weasyprint import HTML
 from io import BytesIO
 import base64
 import os
@@ -112,7 +112,7 @@ async def generate_pdf_report(
             </tr>
             """
 
-    # Construct complete HTML with Tailwind CDN
+    # Construct complete HTML
     banner_html = f'<img src="data:image/webp;base64,{banner_base64}" class="w-full h-auto mb-4">' if banner_base64 else '<h2 class="text-xs uppercase tracking-[0.2em] font-bold text-cyan-500 mb-1">Aurea Insight</h2>'
     
     html_content = f"""
@@ -121,7 +121,6 @@ async def generate_pdf_report(
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <script src="https://cdn.tailwindcss.com"></script>
     <style>
         {brand_styles}
     </style>

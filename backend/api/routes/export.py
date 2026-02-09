@@ -6,6 +6,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
 from typing import Optional
 import io
+from loguru import logger
 
 from core.schemas import ExportRequest
 
@@ -26,8 +27,6 @@ async def export_pdf(
     """
     from api.routes.company import companies
     from api.routes.audit import audit_results
-    from exports.pdf_report import generate_pdf_report
-    from exports.excel_export import generate_ajes_xlsx
     
     if company_id not in companies:
         raise HTTPException(status_code=404, detail="Company not found")
@@ -49,13 +48,25 @@ async def export_pdf(
         raise HTTPException(status_code=404, detail="No audit found for this company")
     
     # Generate PDF
-    pdf_bytes = await generate_pdf_report(
-        company_data=companies[company_id],
-        audit_data=result,
-        include_findings=include_findings,
-        include_ajes=include_ajes,
-        include_audit_trail=include_audit_trail
-    )
+    try:
+        from exports.pdf_report import generate_pdf_report
+        pdf_bytes = await generate_pdf_report(
+            company_data=companies[company_id],
+            audit_data=result,
+            include_findings=include_findings,
+            include_ajes=include_ajes,
+            include_audit_trail=include_audit_trail
+        )
+    except Exception as e:
+        logger.exception(f"PDF export failed for company_id={company_id}, audit_id={audit_id}: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "Failed to generate PDF report. "
+                "If this is a deployed environment, ensure WeasyPrint system dependencies "
+                "(libglib2.0-0, libpango-1.0-0, libgdk-pixbuf-2.0-0) are installed."
+            )
+        )
     
     # Return as streaming response
     return StreamingResponse(
@@ -139,7 +150,6 @@ async def export_ajes_csv(company_id: str, audit_id: Optional[str] = None):
 async def export_ajes_xlsx(company_id: str, audit_id: Optional[str] = None):
     """Export Adjusting Journal Entries as Excel."""
     from api.routes.audit import audit_results
-    import pandas as pd
     
     # Find audit results
     if audit_id:
