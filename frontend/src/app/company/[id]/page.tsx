@@ -53,6 +53,7 @@ import { toast } from "sonner";
 import QuotaExceededModal from "@/components/ui/QuotaExceededModal";
 import { AuditProgress } from "@/components/ui/progress";
 import { API_BASE_URL } from "@/lib/api";
+import AuditorChat from "@/components/chat/AuditorChat";
 
 // Count-up animation hook for stat cards
 function useCountUp(target: number | null, duration: number = 800): string {
@@ -133,12 +134,6 @@ export default function CompanyPage({ params }: PageProps) {
   const [isOwnershipFullscreen, setIsOwnershipFullscreen] = useState(false);
   const [selectedOwnershipNode, setSelectedOwnershipNode] = useState<EntityNode | null>(null);
 
-  // Chat state
-  const [chatMessages, setChatMessages] = useState<{ role: string; content: string }[]>([]);
-  const [chatInput, setChatInput] = useState("");
-  const [isChatLoading, setIsChatLoading] = useState(false);
-  const chatRef = useRef<HTMLDivElement>(null);
-
   // Dialog state for interactive details
   const [selectedFinding, setSelectedFinding] = useState<any>(null);
   const [findingDialogOpen, setFindingDialogOpen] = useState(false);
@@ -159,12 +154,12 @@ export default function CompanyPage({ params }: PageProps) {
     }
   }, [liveReasoningSteps]);
 
-  // Auto-scroll chat to bottom
+  // Auto-scroll reasoning panel to bottom
   useEffect(() => {
-    if (chatRef.current) {
-      chatRef.current.scrollTop = chatRef.current.scrollHeight;
+    if (reasoningRef.current) {
+      reasoningRef.current.scrollTop = reasoningRef.current.scrollHeight;
     }
-  }, [chatMessages]);
+  }, [liveReasoningSteps]);
 
   const fetchCompanyData = async () => {
     try {
@@ -635,37 +630,7 @@ export default function CompanyPage({ params }: PageProps) {
     }
   };
 
-  const sendChatMessage = async () => {
-    if (!chatInput.trim() || isChatLoading) return;
 
-    const userMessage = chatInput;
-    setChatInput("");
-    setChatMessages(prev => [...prev, { role: "user", content: userMessage }]);
-    setIsChatLoading(true);
-
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/chat/`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          message: userMessage,
-          company_id: id,
-          audit_id: currentAuditId
-        })
-      });
-
-      if (response.ok) {
-        const result = await response.json();
-        setChatMessages(prev => [...prev, { role: "assistant", content: result.message }]);
-      } else {
-        setChatMessages(prev => [...prev, { role: "assistant", content: "Sorry, I encountered an error processing your request." }]);
-      }
-    } catch (error) {
-      setChatMessages(prev => [...prev, { role: "assistant", content: "Connection error. Please try again." }]);
-    } finally {
-      setIsChatLoading(false);
-    }
-  };
 
   const exportPdf = () => {
     if (!currentAuditId) {
@@ -1009,9 +974,9 @@ export default function CompanyPage({ params }: PageProps) {
         })()}
 
         {/* Main Content */}
-        <div className="grid lg:grid-cols-3 gap-6">
-          {/* Left Panel - Tabs */}
-          <div className="lg:col-span-2">
+        <div className="space-y-6">
+          {/* Tabs Section - Full Width */}
+          <div className="w-full">
             <Tabs defaultValue="findings" className="space-y-4">
               <TabsList className="bg-[#111111] border border-[#1f1f1f]">
                 <TabsTrigger value="findings" className="data-[state=active]:bg-[#1a1a1a]">
@@ -1645,73 +1610,6 @@ export default function CompanyPage({ params }: PageProps) {
               </TabsContent>
             </Tabs>
           </div>
-
-          {/* Right Panel - Chat */}
-          <div className="lg:col-span-1">
-            <Card className="bg-[#111111] border-[#1f1f1f] max-h-[85vh] h-[700px] flex flex-col">
-              <CardHeader className="shrink-0">
-                <CardTitle className="flex items-center gap-2">
-                  <MessageSquare className="h-5 w-5 text-[#00d4ff]" />
-                  Auditor Assistant
-                </CardTitle>
-                <CardDescription>Ask questions about the audit</CardDescription>
-              </CardHeader>
-              <CardContent className="flex-1 flex flex-col overflow-hidden min-h-0">
-                {/* Chat Messages */}
-                <div className="flex-1 overflow-y-auto pr-2 min-h-0" ref={chatRef}>
-                  <div className="space-y-3">
-                    {chatMessages.length === 0 && (
-                      <div className="text-center text-muted-foreground text-sm py-8">
-                        <Brain className="h-8 w-8 mx-auto mb-2 opacity-50" />
-                        <p>Ask me anything about the audit findings!</p>
-                        <p className="text-xs mt-1">e.g., "What is the highest risk finding?"</p>
-                      </div>
-                    )}
-                    {chatMessages.map((msg, idx) => (
-                      <div
-                        key={idx}
-                        className={`p-3 rounded-lg ${msg.role === "user"
-                          ? "bg-[#00d4ff]/10 border border-[#00d4ff]/20 ml-4"
-                          : "bg-[#0a0a0a] border border-[#1f1f1f] mr-4"
-                          }`}
-                      >
-                        <div className="text-xs text-muted-foreground mb-1">
-                          {msg.role === "user" ? "You" : "Assistant"}
-                        </div>
-                        <div className="text-sm wrap-break-word whitespace-pre-wrap overflow-hidden">{msg.content}</div>
-                      </div>
-                    ))}
-                    {isChatLoading && (
-                      <div className="flex items-center gap-2 text-muted-foreground text-sm p-3">
-                        <Loader2 className="h-4 w-4 animate-spin" />
-                        Thinking...
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                {/* Chat Input - always pinned at bottom */}
-                <div className="flex gap-2 mt-4 shrink-0 pt-2 border-t border-[#1f1f1f]">
-                  <Input
-                    placeholder="Ask about the audit..."
-                    value={chatInput}
-                    onChange={(e) => setChatInput(e.target.value)}
-                    onKeyDown={(e) => e.key === "Enter" && sendChatMessage()}
-                    className="bg-[#0a0a0a] border-[#1f1f1f]"
-                  />
-                  <Button
-                    size="icon"
-                    onClick={sendChatMessage}
-                    disabled={isChatLoading || !chatInput.trim()}
-                    className="bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90"
-                  >
-                    <Send className="h-4 w-4" />
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
-
-          </div>
         </div>
 
         {/* Live Console */}
@@ -1838,6 +1736,8 @@ export default function CompanyPage({ params }: PageProps) {
           </div>
         </div>
       )}
+      {/* Floating Auditor Chat Widget */}
+      <AuditorChat companyId={id} auditId={currentAuditId ?? undefined} />
     </main>
   );
 }

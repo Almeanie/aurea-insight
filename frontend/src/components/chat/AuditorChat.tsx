@@ -4,6 +4,7 @@ import { useState, useRef, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Sheet, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { MessageSquare, Send, X } from "lucide-react";
 import { chatApi } from "@/lib/api";
 
@@ -80,14 +81,23 @@ export default function AuditorChat({ companyId, auditId }: AuditorChatProps) {
 
   return (
     <Sheet>
-      <SheetTrigger asChild>
-        <Button
-          size="icon"
-          className="fixed bottom-6 right-6 h-14 w-14 rounded-full bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90 shadow-2xl shadow-[#00d4ff]/40 z-100 transition-all hover:scale-110 animate-in fade-in slide-in-from-bottom-4 duration-700"
-        >
-          <MessageSquare className="h-6 w-6" />
-        </Button>
-      </SheetTrigger>
+      <TooltipProvider delayDuration={0}>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <SheetTrigger asChild>
+              <Button
+                size="icon"
+                className="fixed bottom-6 right-6 h-14 w-14 rounded-full bg-[#00d4ff] text-black hover:bg-[#00d4ff]/90 shadow-2xl shadow-[#00d4ff]/40 z-100 transition-all hover:scale-110 animate-in fade-in slide-in-from-bottom-4 duration-700"
+              >
+                <MessageSquare className="h-6 w-6" />
+              </Button>
+            </SheetTrigger>
+          </TooltipTrigger>
+          <TooltipContent side="top" className="bg-[#1a1a1a] border-[#2a2a2a] text-white">
+            <p>Ask assistant</p>
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
       <SheetContent className="w-[400px] sm:w-[540px] bg-[#0a0a0a] border-[#1f1f1f]">
         <SheetHeader>
           <SheetTitle className="flex items-center gap-2">
