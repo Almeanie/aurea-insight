@@ -8,6 +8,7 @@ from core.gemini_client import GeminiClient
 from core.audit_trail import AuditRecord
 from core.schemas import AuditFinding, Severity, FindingCategory, AccountingBasis
 from .gaap_rules import GAAPRulesEngine
+from .ifrs_rules import IFRSRulesEngine
 from .anomaly_detection import AnomalyDetector
 from .fraud_detection import FraudDetector
 from .aje_generator import AJEGenerator
@@ -35,6 +36,7 @@ class AuditEngine:
         logger.info("[AuditEngine.__init__] Initializing audit engine components")
         self.gemini = GeminiClient()
         self.gaap_engine = GAAPRulesEngine()
+        self.ifrs_engine = IFRSRulesEngine()
         self.anomaly_detector = AnomalyDetector()
         self.fraud_detector = FraudDetector()
         self.aje_generator = AJEGenerator()
@@ -154,7 +156,13 @@ class AuditEngine:
         gl = company_data.get("gl")
         tb = company_data.get("tb")
         
-        logger.info(f"[run_full_audit] Company: {metadata.name}")
+        # Resolve accounting standard early so all steps use it
+        from core.schemas import AccountingStandard as _AS
+        _acct_std = accounting_standard if accounting_standard is not None else _AS.GAAP
+        _is_ifrs = (_acct_std == _AS.IFRS) if hasattr(_AS, "IFRS") else (str(_acct_std).lower() == "ifrs")
+        _standard_label = "IFRS" if _is_ifrs else "US GAAP"
+        
+        logger.info(f"[run_full_audit] Company: {metadata.name}, Standard: {_standard_label}")
         report_progress(f"Loading data: {len(gl.entries) if gl else 0} GL entries", 5.0, step_name="Loading Data")
         
         all_findings = []
@@ -178,7 +186,7 @@ class AuditEngine:
             })
             
             # This is fast and synchronous, keep as is
-            structural_findings = self._validate_structure(gl, tb, coa)
+            structural_findings = self._validate_structure(gl, tb, coa, _is_ifrs)
             all_findings.extend(structural_findings)
             
             stream_reasoning_step(f"Found {len(structural_findings)} structural issues", {
@@ -197,19 +205,26 @@ class AuditEngine:
             return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
 
         if start_phase <= 2:
-            logger.info("[run_full_audit] Starting parallel analysis (GAAP, Anomaly, Fraud)")
-            report_progress("Step 2-4: Running parallel analysis (GAAP, Anomaly, Fraud)...", 20.0, current_step=2, step_name="Parallel Analysis")
+            logger.info(f"[run_full_audit] Starting parallel analysis ({_standard_label}, Anomaly, Fraud)")
+            report_progress(f"Step 2-4: Running parallel analysis ({_standard_label}, Anomaly, Fraud)...", 20.0, current_step=2, step_name="Parallel Analysis")
             
             # --- Define Async Task Wrappers ---
             
-            async def run_gaap():
-                stream_reasoning_step("Running GAAP compliance checks", {
-                    "description": "Applying Generally Accepted Accounting Principles validation",
-                    "accounting_basis": str(metadata.accounting_basis),
-                    "steps": "Running concurrently with other checks"
-                })
-                # gaap_engine.check_compliance is now async and uses asyncio.to_thread internally
-                findings = await self.gaap_engine.check_compliance(gl, tb, coa, metadata.accounting_basis)
+            async def run_compliance():
+                if _is_ifrs:
+                    stream_reasoning_step("Running IFRS compliance checks", {
+                        "description": "Applying International Financial Reporting Standards validation",
+                        "accounting_basis": str(metadata.accounting_basis),
+                        "steps": "Running concurrently with other checks"
+                    })
+                    findings = await self.ifrs_engine.check_compliance(gl, tb, coa, metadata.accounting_basis)
+                else:
+                    stream_reasoning_step("Running GAAP compliance checks", {
+                        "description": "Applying Generally Accepted Accounting Principles validation",
+                        "accounting_basis": str(metadata.accounting_basis),
+                        "steps": "Running concurrently with other checks"
+                    })
+                    findings = await self.gaap_engine.check_compliance(gl, tb, coa, metadata.accounting_basis)
                 for f in findings: stream_data("finding", f)
                 return findings
 
@@ -235,16 +250,21 @@ class AuditEngine:
 
             # --- Execute in Parallel ---
             # This allows the event loop to remain free for chat/health checks
-            results = await asyncio.gather(run_gaap(), run_anomaly(), run_fraud())
+            results = await asyncio.gather(run_compliance(), run_anomaly(), run_fraud())
             
-            gaap_findings, anomaly_findings, fraud_findings = results
+            compliance_findings, anomaly_findings, fraud_findings = results
             
-            all_findings.extend(gaap_findings)
+            # Post-process anomaly/fraud findings to use correct standard references
+            if _is_ifrs:
+                anomaly_findings = [self._convert_finding_to_ifrs(f) for f in anomaly_findings]
+                fraud_findings = [self._convert_finding_to_ifrs(f) for f in fraud_findings]
+            
+            all_findings.extend(compliance_findings)
             all_findings.extend(anomaly_findings)
             all_findings.extend(fraud_findings)
             
             stream_reasoning_step(f"Analysis complete. Found {len(all_findings)} total issues.", {
-                "gaap_count": len(gaap_findings),
+                "compliance_count": len(compliance_findings),
                 "anomaly_count": len(anomaly_findings),
                 "fraud_count": len(fraud_findings)
             })
@@ -253,6 +273,11 @@ class AuditEngine:
             report_progress(f"Analysis complete. Found {len(all_findings)} issues.", 50.0, step_name="Analysis Complete")
             checkpoint("analysis_complete", {"findings": all_findings})
 
+        # Tag all findings with the accounting standard used
+        _std_tag = "ifrs" if _is_ifrs else "gaap"
+        for f in all_findings:
+            f["accounting_standard_used"] = _std_tag
+        
         # ========== Step 5: Enhance findings with AI reasoning ==========
         if check_cancelled():
             return {"findings": all_findings, "ajes": [], "risk_score": {"risk_level": "unknown", "cancelled": True}}
@@ -299,10 +324,6 @@ class AuditEngine:
                 "method": "Rule-based generation"
             })
             
-            # Resolve accounting standard (parameter or default)
-            from core.schemas import AccountingStandard as _AS
-            _acct_std = accounting_standard if accounting_standard is not None else _AS.GAAP
-
             # Callback streams each AJE to the frontend the moment it is ready
             def on_aje_generated(aje: dict):
                 audit_record.add_aje(aje)
@@ -347,10 +368,43 @@ class AuditEngine:
             "risk_score": risk_score
         }
     
-    def _validate_structure(self, gl, tb, coa) -> list[dict]:
+    # Mapping from GAAP principle labels to IFRS equivalents
+    _GAAP_TO_IFRS_MAP = {
+        "Data Integrity": "Data Integrity (ISA 500)",
+        "Transaction Validity": "Transaction Validity (ISA 500)",
+        "Transaction Timing": "Transaction Timing (ISA 240)",
+        "Payment Controls": "Payment Controls (ISA 240)",
+        "Bank Secrecy Act Compliance": "Anti-Money Laundering (FATF Standards)",
+        "Fraud Detection - Red Flags": "Fraud Indicators (ISA 240)",
+        "Vendor Due Diligence": "Vendor Due Diligence (ISA 550)",
+        "Anti-Money Laundering / Fraud Detection": "Anti-Money Laundering (ISA 240)",
+        "Internal Controls - Access Management": "Internal Controls (ISA 315)",
+        "Internal Controls - Temporal Validation": "Internal Controls (ISA 315)",
+        "Internal Controls (COSO Framework)": "Internal Controls (ISA 315)",
+        "Related Party Disclosure (ASC 850)": "Related Party Disclosures (IAS 24)",
+        "Proper Expense Classification": "Expense Classification (IAS 1)",
+        "ASC 606 Revenue Recognition": "Revenue Recognition (IFRS 15)",
+        "Matching Principle": "Matching Principle (IFRS Framework)",
+        "Cash Basis Accounting": "Cash Basis Accounting (IAS 1)",
+        "Double-Entry Accounting": "Double-Entry Accounting (IFRS Framework)",
+        "Balance Validity": "Balance Validity (IFRS Framework)",
+    }
+    
+    def _convert_finding_to_ifrs(self, finding: dict) -> dict:
+        """Convert a finding that uses gaap_principle to use ifrs_standard instead."""
+        if "gaap_principle" in finding:
+            gaap_val = finding.pop("gaap_principle")
+            ifrs_val = self._GAAP_TO_IFRS_MAP.get(gaap_val, f"{gaap_val} (IFRS)")
+            finding["ifrs_standard"] = ifrs_val
+        return finding
+    
+    def _validate_structure(self, gl, tb, coa, is_ifrs: bool = False) -> list[dict]:
         """Validate data structure."""
         logger.info("[_validate_structure] Validating GL, TB, and COA structure")
         findings = []
+        
+        # Use the correct key for the selected accounting standard
+        _std_key = "ifrs_standard" if is_ifrs else "gaap_principle"
         
         # Check TB balance
         if tb and not tb.is_balanced:
@@ -363,7 +417,7 @@ class AuditEngine:
                 "details": f"Trial Balance debits ({tb.total_debits}) do not equal credits ({tb.total_credits})",
                 "recommendation": "Investigate and correct the imbalance before proceeding",
                 "confidence": 1.0,
-                "gaap_principle": "Double-Entry Accounting",
+                _std_key: "Double-Entry Accounting (IFRS Framework)" if is_ifrs else "Double-Entry Accounting",
                 "detection_method": "Rule-based validation: Double-entry accounting balance check"
             })
         
@@ -380,7 +434,7 @@ class AuditEngine:
                         "details": f"Cash account shows negative balance of ${abs(row.ending_balance):,.2f}",
                         "recommendation": "Verify all cash transactions and bank reconciliation",
                         "confidence": 1.0,
-                        "gaap_principle": "Balance Validity",
+                        _std_key: "Balance Validity (IFRS Framework)" if is_ifrs else "Balance Validity",
                         "detection_method": "Rule-based validation: Cash account balance cannot be negative"
                     })
         
